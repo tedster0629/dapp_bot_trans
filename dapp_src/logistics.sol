@@ -1,4 +1,6 @@
-pragma solidity ^0.4.16; /// @title Shipment-related Smart contract contract Shipment {
+pragma solidity ^0.4.16; /// @title Shipment-related Smart contract
+
+contract Shipment {
     
     address public sender;
     address public receiver;
@@ -21,10 +23,8 @@ pragma solidity ^0.4.16; /// @title Shipment-related Smart contract contract Shi
     event Completed();
     event Refused();
     
-    function Shipment(address receiverAddress, address handlerAddress, uint64 shipmentGivenPrice, bytes32 
-shipmentGivenName) public {
-    //function Shipment(address receiverAddress, address handlerAddress, uint64 shipmentGivenPrice, bool 
-toPayOnDestination) public {
+    function Shipment(address receiverAddress, address handlerAddress, uint64 shipmentGivenPrice, bytes32 shipmentGivenName) public {
+    //function Shipment(address receiverAddress, address handlerAddress, uint64 shipmentGivenPrice, bool toPayOnDestination) public {
         sender = tx.origin;
         receiver = receiverAddress;
         handler = handlerAddress;
@@ -78,8 +78,7 @@ contract shipmentManager {
     }
     
     function listShipped() public returns(shipmentListing[]) {
-        shipmentListing[] memory shippedContractListing = new 
-shipmentListing[](numShippedContracts[msg.sender]);
+        shipmentListing[] memory shippedContractListing = new shipmentListing[](numShippedContracts[msg.sender]);
         for(uint32 i=0;i<numShippedContracts[msg.sender];i++){
             Shipment aux_contract = allContracts[shippedContracts[msg.sender][i]];
             shipmentListing memory aux_listing = shipmentListing({
@@ -93,8 +92,7 @@ shipmentListing[](numShippedContracts[msg.sender]);
     }
     
     function listIncoming() public returns(shipmentListing[]) {
-        shipmentListing[] memory incomingContractListing = new 
-shipmentListing[](numIncomingContracts[msg.sender]);
+        shipmentListing[] memory incomingContractListing = new shipmentListing[](numIncomingContracts[msg.sender]);
         for(uint32 i=0;i<numIncomingContracts[msg.sender];i++){
             Shipment aux_contract = allContracts[incomingContracts[msg.sender][i]];
             shipmentListing memory aux_listing = shipmentListing({
@@ -108,8 +106,7 @@ shipmentListing[](numIncomingContracts[msg.sender]);
     }
     
     function listHandled() public returns(shipmentListing[]) {
-        shipmentListing[] memory handledContractListing = new 
-shipmentListing[](numHandledContracts[msg.sender]);
+        shipmentListing[] memory handledContractListing = new shipmentListing[](numHandledContracts[msg.sender]);
         for(uint32 i=0;i<numHandledContracts[msg.sender];i++){
             Shipment aux_contract = allContracts[handledContracts[msg.sender][i]];
             shipmentListing memory aux_listing = shipmentListing({
@@ -122,8 +119,7 @@ shipmentListing[](numHandledContracts[msg.sender]);
         return handledContractListing;
     }
     
-    function deployShipmentContract(address receiverAddress, address handlerAddress, uint64 shipmentGivenPrice, 
-bytes32 shipmentGivenName) public returns(bool){
+    function deployShipmentContract(address receiverAddress, address handlerAddress, uint64 shipmentGivenPrice, bytes32 shipmentGivenName) public returns(bool){
         
         require(allNames[shipmentGivenName] > 0);
         
@@ -137,8 +133,7 @@ bytes32 shipmentGivenName) public returns(bool){
         numHandledContracts[handlerAddress] += 1;
         numIncomingContracts[receiverAddress] += 1;
         
-        allContracts[numAllContracts_] = new Shipment(receiverAddress, handlerAddress, shipmentGivenPrice, 
-shipmentGivenName);
+        allContracts[numAllContracts_] = new Shipment(receiverAddress, handlerAddress, shipmentGivenPrice, shipmentGivenName);
         shippedContracts[msg.sender][numShippedContracts_] = numAllContracts_;
         handledContracts[handlerAddress][numHandledContracts_] = numAllContracts_;
         incomingContracts[receiverAddress][numIncomingContracts_] = numAllContracts_;
