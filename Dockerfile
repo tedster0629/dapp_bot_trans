@@ -12,6 +12,7 @@ RUN mkdir -p /usr/src/bot && cp -a /tmp/node_modules /usr/src/bot/
 # add project files
 ADD src /usr/src/bot/src
 ADD package.json /usr/src/bot/package.json
+ADD dapp_src /usr/src/bot/dapp_src
 WORKDIR /usr/src/bot
 
 CMD nodemon -L src/bot.js

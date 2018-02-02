@@ -1,17 +1,37 @@
 const Bot = require('./lib/Bot')
 const SOFA = require('sofa-js')
 const Fiat = require('./lib/Fiat')
-const web3 = require('web3')
+const fs = require('fs')
+//const web3 = require('web3')
 const solc = require('solc')
 const assert = require('assert')
 
-let code = fs.readFileSync('./solidity/logistics.sol').toString();
-let web3 = new Web3( new Web3.providers.HttpProvider('https://ropsten.infura.io/'));
+const DEFAULT_FUNC = () => {return true;};
+
+let code = fs.readFileSync('./dapp_src/logistics.sol').toString();
+//let web3 = new Web3( new Web3.providers.HttpProvider('https://ropsten.infura.io/'));
 let bot = new Bot();
 
+let last_command = 'main';
 
+const retrieveList = () => {return "Sorry, nothing to show yet...";};
+const listSent = (session) => {sendMessage(session, retrieveList()); return true;};
+const listPending = (session) => {sendMessage(session, retrieveList()); return true;};
+const listAndPrompt = (session, options) => {
+  sendMessage(session, `Please, choose one of the following shipping contracts`);
+  sendMessage(session, retrieveList(), options);
+  return true;
+};
 
-let last_command = 'main'
+let shippingContractName = true;
+let shippingContractReceiver = true;
+let shippingContractTransporter = true;
+let shippingContractPrice = true;
+let shippingReceivedAction = true;
+
+function hasPropertyName(obj, name) {
+	return typeof(obj) !== 'undefined' ? Object.getOwnPropertyNames(obj).indexOf(name) > -1 : false;
+}
 
 let menuOptions = {
   main: {
@@ -45,7 +65,7 @@ let menuOptions = {
           label: 'List Pending',
           description: 'Show a list for all pending packets',
         },
-        f: listPending,
+	  f: listPending,
       },
       {
         control: {
@@ -110,9 +130,8 @@ let menuOptions = {
     msgHeader: `You're about to close a shipping contract.`,
     prompts: [
       {
-        body: `Please, choose one of the following shipping contracts`,
+        body: listAndPrompt,
         v: shippingContractName,
-        f: listPending,
       },
       {
         body: `What do you want to do?`,
@@ -121,11 +140,13 @@ let menuOptions = {
           {type: 'button', label: 'Refuse & Return', value: 'refuse'},
         ],
         v: shippingReceivedAction,
-        f: (opt) => {
+        f: (session, opt) => {
           if (opt == 'accept') {
             // TODO: Implement contract acceptance method "send"
+			return true;
           } else if (opt == 'refuse') {
             // TODO: Implement contract refuse method "send"
+			return true;
           } else {
             return false;
           }
@@ -137,21 +158,20 @@ let menuOptions = {
 };
 
 let default_controls = menuOptions.main.options.map(function(option){return {
-  type: option.type,
-  label: option.label,
-  value: option.label.toLowerCase().split(' ').join('_'),
+  type: option.control.type,
+  label: option.control.label,
+  value: option.control.label.toLowerCase().split(' ').join('_'),
 }});
 
-// ROUTING
-
 bot.onEvent = function(session, message) {
+  let prev_submenu = maybeRetrieveSessionVar(session, 'submenu', 'main');
   switch (message.type) {
     case 'Init':
       help(session);
       break
     case 'Message':
     case 'Command':
-      onCommandOrMessage(session, message) ? return : unknownCommandOrMessage(session, message);
+      onCommandOrMessage(session, message)
       break
     case 'Payment':
       onPayment(session, message);
@@ -160,6 +180,9 @@ bot.onEvent = function(session, message) {
       help(session);
       break
   }
+  let new_submenu = maybeRetrieveSessionVar(session, 'submenu', 'main');
+  if((prev_submenu != new_submenu) || (getUIType(menuOptions[new_submenu]) === 'prompts'))
+	help(session);
 }
 
 function maybeRetrieveSessionVar(session, name, default_) {
@@ -170,7 +193,7 @@ function maybeRetrieveSessionVar(session, name, default_) {
 }
 
 function getUIType(menuObj) {
-  return Object.getOwnPropertyNames(menuObj).indexOf('options') > -1 ? 'options' : 'prompts';
+  return hasPropertyName(menuObj, 'options') ? 'options' : 'prompts';
 }
 
 function checkPromptPhase(session) {
@@ -179,14 +202,21 @@ function checkPromptPhase(session) {
 
 function nextPromptPhase(session, menuObj) {
   let promptPhase = checkPromptPhase(session);
-  session.set('promptphase', promptPhase + 1);
-  return promptPhase >= menuObj.prompts.length ? -1 : promptPhase;
+  promptPhase = (promptPhase + 1) % menuObj.prompts.length;
+  session.set('promptphase', promptPhase);
+  return promptPhase != 0;
+}
+
+function prepareFallBackToMain(session) {
+  session.set('promptphase', 0);
+  session.set('submenu', 'main');
+  sendMessage(session, "Sorry, something didn't go as expected.\n\n Turning back to main menu...");
 }
 
 function help(session) {
 
   let submenu = maybeRetrieveSessionVar(session, 'submenu', 'main');
-  assert(Object.getOwnPropertyNames(menuOptions).indexOf(submenu) > -1, 'Menu not found');
+  assert(hasPropertyName(menuOptions, submenu), 'Menu not found');
 
   let menuObj = menuOptions[submenu];
   let msg = '';
@@ -208,7 +238,7 @@ function help(session) {
           label: option.control.label,
           value: option.control.label.toLowerCase().split(' ').join('_'),
         };
-      }
+      })
     );
 
   } else {
@@ -219,84 +249,91 @@ function help(session) {
       session.set('promptphase', 0);
       promptPhase = 0;
     }
+	
+	let menuPrompt = menuObj.prompts[promptPhase];
 
-    sendMessage(
-      session,
-      menuObj.prompts[promptPhase].body
-    );
+	let controls = hasPropertyName(menuPrompt, 'controls') ? menuObj.prompts[promptPhase].controls : [];
+	
+	if(typeof(menuObj.prompts[promptPhase].body) !== 'function'){
+      sendMessage(
+        session,
+        menuObj.prompts[promptPhase].body,
+	    controls
+      );
+	} else {
+	  menuObj.prompts[promptPhase].body(session, controls);
+	}
 
   }
+  
+  return true;
 }
 
 function onCommandOrMessage(session, obj) {
+	
+  const label2Command = (message) => {return message.toLowerCase().split(' ').join('_')};
+  const retrieveOption = (opt) => {return hasPropertyName(opt.content, 'value') ? opt.content.value : label2Command(opt.body);}
+  const readPromptData = (opt) => {return hasPropertyName(opt.content, 'value') ? opt.content.value : opt.body;}
 
   let submenu = maybeRetrieveSessionVar(session, 'submenu', 'main');
-  assert(Object.getOwnPropertyNames(menuOptions).indexOf(submenu) > -1, 'Menu not found');
+  assert(hasPropertyName(menuOptions, submenu), 'Menu not found');
 
   let menuObj = menuOptions[submenu];
+  
+  if(typeof(menuObj) === 'undefined') {
+	prepareFallBackToMain(session);
+	return true;
+  }
+  
+  function handleOption(opt, menuOpt){
+	let optFunc = hasPropertyName(menuOpt, 'f') ? menuOpt.f : DEFAULT_FUNC;
 
-  function maybeCallCommand(opt) {
+	let result = hasPropertyName(menuOpt, 'v') ? optFunc(session, menuOpt.v) : optFunc(session);
+	if (hasPropertyName(menuOptions, opt) && result)
+	  session.set('submenu', opt);
+  
+    return result;
+  }
+  
+  function handlePrompt(opt){
+	let promptPhase = checkPromptPhase(session);
+    let menuPrompt = menuObj.prompts[promptPhase];
 
-    if (getUIType(menuObj) == 'options') {
-
-      let didAnything = false;
-
-      let optIdx = menuObj.options.map(function(option){
-        return option.control.label.toLowerCase().split(' ').join('_');
-      }).indexOf(opt);
-
-      if (optIdx <= -1)
-        return false
-
-      if (Object.getOwnPropertyNames(menuOptions).indexOf(opt) > -1) {
-        session.set('submenu', opt);
-        didAnything = true;
-      }
-
-      let menuOpt = menuObj.options[optIdx];
-      return Object.getOwnPropertyNames(menuOpt).indexOf('f') > -1 ? !menuOpt.f(session) : didAnything;
-
-    } else {
-
-      let promptPhase = checkPromptPhase(session);
-      let menuPrompt = menuObj.prompts[promptPhase];
-
-      let hasVar = Object.getOwnPropertyNames(menuPrompt).indexOf('v') > -1;
-      let hasFunc = Object.getOwnPropertyNames(menuPrompt).indexOf('f') > -1;
-
-      let promptFunc = hasFunc > -1 ? menuPrompt.f : ()=>true;
-
-      if (hasVar)
-        menuOptions[submenu].prompts[promptPhase].v = opt
-
-      if (hasVar ? promptFunc(session, opt) : promptFunc(session)) {
-        if (nextPromptPhase() <= -1)
-          session.set('submenu', menuObj.parent);
-        return true
-      }
-
-      return false
-
+	if(typeof(menuPrompt) === 'undefined') {
+	  prepareFallBackToMain(session);
+	  return true;
     }
-            
+
+    let hasVar = hasPropertyName(menuPrompt, 'v');
+    let promptFunc = hasPropertyName(menuPrompt, 'f') ? menuPrompt.f : DEFAULT_FUNC;
+
+    if (hasVar)
+      menuOptions[submenu].prompts[promptPhase].v = opt;
+
+    if (hasVar ? promptFunc(session, opt) : promptFunc(session)) {
+      if (!nextPromptPhase(session, menuObj))
+        session.set('submenu', menuObj.parent);
+      return true
+    }
+
+    return false
+  }
+  
+  function unknownCommandOrMessage() {
+    sendMessage(session, "Unknown command or message...\n\nPlease, provide a valid input based on the following");
+    help(session);
+  }  
+
+  if (getUIType(menuObj) == 'options') {
+	let option = retrieveOption(obj);
+	let commandMap = menuObj.options.map((option)=>{return label2Command(option.control.label);});
+	let menuOptIdx = commandMap.indexOf(option);
+    return menuOptIdx > -1 ? handleOption(option, menuObj.options[menuOptIdx]) : unknownCommandOrMessage();
+  } else {
+	let data = readPromptData(obj);
+	return handlePrompt(data);
   }
 
-  function onCommand (command) {
-    return maybeCallCommand(command.content.value);
-  }
-
-  function onMessage(message) {
-    return maybeCallCommand(message.toLowerCase().split(' ').join('_'));
-  }
-
-  obj.hasOwnProperty('content') ? (onCommand(obj) ? true : onMessage(obj)) : onMessage(obj);
-
-  help(session);
-
-}
-
-function unknownCommandOrMessage(session, obj) {
-  help(session);
 }
 
 function onPayment(session, message) {
