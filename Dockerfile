@@ -15,4 +15,4 @@ ADD package.json /usr/src/bot/package.json
 ADD dapp_src /usr/src/bot/dapp_src
 WORKDIR /usr/src/bot
 
-CMD nodemon -L src/bot.js
+CMD nodemon -e js,html,css -L src/bot.js -L src/public/templates -L src/public/stylesheets -L src/public/frontend

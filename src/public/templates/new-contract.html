@@ -1,0 +1,51 @@
+{% extends "index.html" %}
+{% block content %}
+  <form>
+    <div class="form-group form-row">
+	  <div class="col-md-6 mb-3">
+	      <label for="contract-name" id="contract-name-label">Contract Name</label>
+	    <div class="input-group">
+		  <input type="text" name="contract-name" id="contract-name" class="form-control" maxlength="32" placeholder="MyContract" aria-label="Contract Name" aria-descriptedby="contract-name-label" required>
+		</div>
+	  </div>
+	  <div class="col-md-6 mb-3">
+          <label for="contract-price">Price to pay on arrival</label>
+	    <div class="input-group">
+          <div class="input-group-prepend">
+            <span class="input-group-text" id="contract-price-label">$</span>
+          </div>
+          <input type="number" name="contract-price" id="contract-price" class="form-control" placeholder="0" aria-label="Contract Price" aria-descriptedby="contract-price-label" required>
+		</div>
+	  </div>
+	</div>
+    <div class="form-group form-row">
+	  <div class="col-md-6 mb-3">
+          <label for="receiver-address">Receiver's Address</label>
+	    <div class="input-group">
+          <div class="input-group-prepend">
+            <span class="input-group-text" id="receiver-address-label">0x</span>
+          </div>
+          <input type="text" name="receiver-address" id="receiver-address" class="form-control" size="40" placeholder="1234567890123456789012345678901234567890" aria-label="Receiver Address" aria-descriptedby="receiver-address-label" required>
+		</div>
+	  </div>
+	  <div class="col-md-6 mb-3">
+          <label for="handler-address">Handler's Address</label>
+	    <div class="input-group">
+	      <div class="input-group-prepend">
+		    <span class="input-group-text" id="handler-address-label">0x</span>
+		  </div>
+		  <input type="text" name="handler-address" id="handler-address" class="form-control" size="40" placeholder="1234567890123456789012345678901234567890" aria-label="Handler Address" aria-descriptedby="handler-address-label" required>
+		</div>
+	  </div>
+	</div>
+	<div class="form-group">
+	  <div class="form-check">
+	    <input class="form-check-input" type="checkbox" value="" id="userKnowsWhatsDoing" required>
+		<label class="form-check-label" for="userKnowsWhatsDoing">
+		  I know what I'm doing
+		</label>
+	  </div>
+	</div>
+	<button type="submit" class="btn btn-primary mb-3">Deploy Contract</button>
+  </form>
+{% endblock %}

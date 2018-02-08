@@ -1,0 +1,20 @@
+{% extends "index.html" %}
+{% block content %}
+  <div class="alert alert-warning" role="alert">
+    <strong>Disclaimer:</strong> For platform reasons, and despite the fact that you might have setup a
+	price in other currency, payment value is necessarily converted to ETH during the payment process
+	and thereby stored as ETH in the contract waiting for your withdrawal. As for now, ETH prices are
+	still volatile and subject to sudden variation, which may result on benefit or loss to you, an
+	effect that may or may not be restored, enhanced or worsened with time. We recommend you keep track
+	of the payment process with this same app in order to avoid any losses, but we won't take any
+	resposibility for potential financial harms you might suffer because of ETH price fluctuations, as
+	well as we don't make any profit when the result of this turns to be positive.
+  </div>
+  <div class="alert alert-success" role="alert">
+    Withdrawal-pending balance for this contract is <strong>{{ pending }}</strong> ETH
+  </div>
+  <button type="submit" class="btn btn-primary mb-3">Proceed with Withdrawal</button>
+{% endblock %}
+{% block allowedUsers %}
+      var allowedUsers = ["Sender"];
+{% endblock%}

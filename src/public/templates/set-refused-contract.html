@@ -1,0 +1,20 @@
+{% extends "index.html" %}
+{% block content %}
+  <div class="alert alert-danger" role="alert">
+    You're about to cancel "{{ name }}" shipment contract, and refusing to pay for and keep the article(s)
+  </div>
+  <form>
+	<div class="form-group">
+	  <div class="form-check">
+	    <input class="form-check-input" type="checkbox" value="" id="userKnowsWhatsDoing" required>
+		<label class="form-check-label" for="userKnowsWhatsDoing">
+		  I know. I'm not happy and I want to proceed
+		</label>
+	  </div>
+	</div>
+	<button type="submit" class="btn btn-primary mb-3">Refuse Article(s)</button>
+  </form>
+{% endblock %}
+{% block allowedUsers %}
+      var allowedUsers = ["Receiver"];
+{% endblock%}

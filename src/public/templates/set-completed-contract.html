@@ -1,0 +1,20 @@
+{% extends "index.html" %}
+{% block content %}
+  <div class="alert alert-danger" role="alert">
+    You're about to pay {{ value }} and sign a confirmation for "{{ name }}" shipment contract, stating that everything involving the shipment process is correct!
+  </div>
+  <form>
+	<div class="form-group">
+	  <div class="form-check">
+	    <input class="form-check-input" type="checkbox" value="" id="userKnowsWhatsDoing" required>
+		<label class="form-check-label" for="userKnowsWhatsDoing">
+		  Everything's fine
+		</label>
+	  </div>
+	</div>
+	<button type="submit mb-3" class="btn btn-primary">Pay & Complete</button>
+  </form>
+{% endblock %}
+{% block allowedUsers %}
+      var allowedUsers = ["Receiver"];
+{% endblock%}
