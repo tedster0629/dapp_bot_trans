@@ -1,16 +1,19 @@
 const path = require('path');
 const fs = require('fs');
 const assert = require('assert');
+const XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest;
 
 const Bot = require('./lib/Bot');
 const SOFA = require('sofa-js');
 const Fiat = require('./lib/Fiat');
 const Logger = require('./lib/Logger');
+//const Session = require('./lib/Session');
 const solc = require('solc');
 
 const nunjucks = require('nunjucks');
 const express = require('express');
 const favicon = require('serve-favicon');
+const multer = require('multer');
 
 const PsqlStore = require('./PsqlStore');
 
@@ -20,35 +23,18 @@ let bot = new Bot();
 let botAddress = bot.client.toshiIdAddress;
 
 const DATABASE_TABLES = `
-CREATE TABLE IF NOT EXISTS registered_users (
-    toshi_id VARCHAR PRIMARY KEY,
-    messages_sent BIGINT DEFAULT 0,
-    first_joined TIMESTAMP WITHOUT TIME ZONE DEFAULT (now() AT TIME ZONE 'utc'),
-    last_seen TIMESTAMP WITHOUT TIME ZONE DEFAULT (now() AT TIME ZONE 'utc'),
-    registered BOOLEAN DEFAULT TRUE,
-    ban_release_date TIMESTAMP WITHOUT TIME ZONE DEFAULT NULL,
-    state INTEGER DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS message_history (
-    message_id BIGSERIAL PRIMARY KEY,
-    toshi_id VARCHAR NOT NULL,
-    message VARCHAR,
-    date TIMESTAMP WITHOUT TIME ZONE DEFAULT (now() AT TIME ZONE 'utc')
-);
-CREATE TABLE IF NOT EXISTS reports (
-    report_id BIGSERIAL PRIMARY KEY,
-    reporter VARCHAR NOT NULL,
-    reportee VARCHAR NOT NULL,
-    report VARCHAR
+CREATE TABLE IF NOT EXISTS contracts (
+    contract_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    data VARCHAR(4096) DEFAULT '{}'
 );
 `;
 
-/*bot.onReady = () => {
-  bot.dbStore = new PsqlStore(bot.client.config.storage.postgres.url, process.env.STAGE || 'development');
-  bot.dbStore.initialize(DATABASE_TABLES).then(() => {}).catch((err) => {
-    Logger.error(err);
-  });
-};*/
+//bot.onReady = () => {
+//  bot.dbStore = new PsqlStore(bot.client.config.storage.postgres.url, process.env.STAGE || 'development');
+//  bot.dbStore.initialize(DATABASE_TABLES).then(() => {Logger.info("Database correctly set!");}).catch((err) => {
+//    Logger.error(err);
+//  });
+//};
 
 const expressOptions = {
   dotfiles: 'ignore',
@@ -86,6 +72,13 @@ const expressNavbarOptions = {
   ],
 };
 
+function Get(yourUrl){
+    var Httpreq = new XMLHttpRequest();
+    Httpreq.open("GET",yourUrl,false);
+    Httpreq.send(null);
+    return Httpreq.responseText;
+}
+
 function hasPropertyName(obj, name) {
 	return typeof(obj) !== 'undefined' ? Object.getOwnPropertyNames(obj).indexOf(name) > -1 : false;
 }
@@ -97,6 +90,9 @@ function generateNavbarOptions(req) {
 function retrieveContractAttributes(contract) {
   
 }
+
+const MYIP = JSON.parse(Get("https://jsonip.com")).ip;
+const upload = multer();
 
 let app = express();
 app.use('static', express.static(path.join(__dirname,'public'), expressOptions));
@@ -118,8 +114,8 @@ env.addFilter('washere', function(obj) {
 });
 
 app.get('/', (req, res) => {
-  let opts = {};  
-  let contract = hasPropertyName(req.query, 'contract') ? req.query.contract : '';  
+  let opts = {};
+  let contract = hasPropertyName(req.query, 'contract') ? req.query.contract : '';
   opts['options'] = generateNavbarOptions(req);
   opts['title'] = "Logistics 3.0";
   opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
@@ -134,6 +130,21 @@ app.get('/new-contract', (req, res) => {
   opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
   opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
   res.render(path.join(__dirname,'public','templates','new-contract.html'), opts);
+});
+
+app.post('/new-contract', upload.array(), (req, res) => {
+  bot.dbStore.execute("INSERT INTO contracts (data) VALUES ($1)", JSON.stringify(req.body).then(() => {
+    let opts = {};
+    opts['options'] = generateNavbarOptions(req);
+    opts['title'] = "Logistics 3.0";
+    opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
+    opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
+    res.render(path.join(__dirname,'public','templates','new-contract.html'), opts);
+    Logger.info("New contract correctly deployed!");
+  }).catch((err) => {
+    Logger.error(err);
+    Logger.error(req.body);
+  }));
 });
 
 app.get('/withdrawal', (req, res) => {
@@ -173,20 +184,38 @@ app.listen(8888, function(){
 let last_command = 'main';
 
 const label2Command = (message) => {return message.toLowerCase().split(' ').join('_')};
-const retrieveList = () => {return "Sorry, nothing to show yet...";};
+const retrieveList = () => {return {value:"Sorry, nothing to show yet...", iserror: true};};
 const listSent = (session) => {sendMessage(session, retrieveList()); return true;};
 const listPending = (session) => {sendMessage(session, retrieveList()); return true;};
-const listAndPrompt = (session, options) => {
+const listAndPromptReceiver = (session, options) => {
+  let res = retrieveList();
+  if(res.iserror){
+    sendMessage(session, `Sorry, you don't appear as receiver for any pending shipment...`);
+    prepareFallBackToMain(session, false);
+    return true;
+  }
   sendMessage(session, `Please, choose one of the following shipping contracts`);
-  sendMessage(session, retrieveList(), options);
+  sendMessage(session, res.value, options);
   return true;
 };
-
+const listAndPromptSender = (session, options) => {
+  let res = retrieveList();
+  if(res.iserror){
+    sendMessage(session, `Sorry, you don't appear as sender for any pending shipment...`);
+    prepareFallBackToMain(session, false);
+    return true;
+  }
+  sendMessage(session, `Please, choose one of the following shipping contracts`);
+  sendMessage(session, res.value, options);
+  return true;
+};
 let shippingContractName = true;
 let shippingContractReceiver = true;
 let shippingContractTransporter = true;
 let shippingContractPrice = true;
 let shippingReceivedAction = true;
+let withdrawalContractName = true;
+let withdrawalReceivedAction = true;
 
 let menuOptions = {
   main: {
@@ -196,7 +225,7 @@ let menuOptions = {
         control: {
           type: 'button',
           label: 'Test WebView',
-		  action: "Webview::http://90.161.27.215:18889/",
+          action: "Webview::http://" + MYIP + ":18889/",
           description: 'Create a new contract for a shipment',
         }
       },
@@ -204,6 +233,7 @@ let menuOptions = {
         control: {
           type: 'button',
           label: 'New Shipment',
+          action: "Webview::http://" + MYIP + ":18889/new-contract",
           description: 'Create a new contract for a shipment',
         }
       },
@@ -233,6 +263,13 @@ let menuOptions = {
       {
         control: {
           type: 'button',
+          label: 'Withdraw',
+          description: 'Withdraw pending ETH from a contract',
+        },
+      },
+      {
+        control: {
+          type: 'button',
           label: 'Help',
           description: 'Show this message again',
         },
@@ -248,7 +285,7 @@ let menuOptions = {
       },
     ],
   },
-  new_shipment: {
+  /*new_shipment: {
     msgHeader: `You're about to create a new shipping contract.`,
     // TODO: Complete with prompted options
     prompts: [
@@ -268,56 +305,95 @@ let menuOptions = {
         body: `What's the price to pay on arrival for the packet?`,
         v: shippingContractPrice,
       },
-      /*{
-        body: `Do you want to handle payment by contract on the arrival?`,
-        controls: [
-          {type: 'button', label: 'Yes', value: 'yes'},
-          {type: 'button', label: 'No', value: 'no'},
-        ],
-        v: shippingContractPaymentOnArrival,
-      },
-      {
-        body: `What will the deadline be before launching a notification? (format: XX days)`,
-        controls: [
-          {type: 'button', label: 'Any', value: 'any'},
-          {type: 'button', label: '1 Day', value: '1 day'},
-          {type: 'button', label: '5 Days', value: '5 days'},
-          {type: 'button', label: '15 Days', value: '15 days'},
-        ],
-        v: shippingContractDeadline,
-      },*/
+      //{
+      //  body: `Do you want to handle payment by contract on the arrival?`,
+      //  controls: [
+      //    {type: 'button', label: 'Yes', value: 'yes'},
+      //    {type: 'button', label: 'No', value: 'no'},
+      //  ],
+      //  v: shippingContractPaymentOnArrival,
+      //},
+      //{
+      //  body: `What will the deadline be before launching a notification? (format: XX days)`,
+      //  controls: [
+      //    {type: 'button', label: 'Any', value: 'any'},
+      //    {type: 'button', label: '1 Day', value: '1 day'},
+      //    {type: 'button', label: '5 Days', value: '5 days'},
+      //    {type: 'button', label: '15 Days', value: '15 days'},
+      //  ],
+      //  v: shippingContractDeadline,
+      //},
     ],
     parent: 'main',
-  },
+  },*/
   shipment_received: {
     msgHeader: `You're about to close a shipping contract.`,
     prompts: [
       {
-        body: listAndPrompt,
+        body: listAndPromptReceiver,
         v: shippingContractName,
       },
       {
         body: `What do you want to do?`,
         controls: [
-          {type: 'button', label: 'Accept & Pay', value: 'accept'},
-          {type: 'button', label: 'Refuse & Return', value: 'refuse'},
+          {
+            type: 'button',
+            label: 'Accept & Pay',
+            //value: 'accept'
+            action: "Webview::http://" + MYIP + ":18889/set-completed-contract",
+          },
+          {
+            type: 'button',
+            label: 'Refuse & Return',
+            //value: 'refuse'
+            action: "Webview::http://" + MYIP + ":18889/set-refused-contract",
+          },
+          {
+            type: 'button',
+            label: 'Done',
+            value: 'done',
+          },
         ],
         v: shippingReceivedAction,
         f: (session, opt) => {
-          if (opt == 'accept') {
-            // TODO: Implement contract acceptance method "send"
-			return true;
-          } else if (opt == 'refuse') {
-            // TODO: Implement contract refuse method "send"
-			return true;
-          } else {
-            return false;
-          }
+          //TODO: Maybe apply changes to contract
+          return true;
         },
       },
     ],
     parent: 'main',
-  }
+  },
+  withdraw: {
+    msgHeader: `You're about to withdraw pending ETH from a contract.`,
+    prompts: [
+      {
+        body: listAndPromptSender,
+        v: withdrawalContractName,
+      },
+      {
+        body: `What do you want to do?`,
+        controls: [
+          {
+            type: 'button',
+            label: 'Withdraw',
+            //value: 'accept'
+            action: "Webview::http://" + MYIP + ":18889/withdrawal",
+          },
+          {
+            type: 'button',
+            label: 'Done',
+            value: 'done',
+          },
+        ],
+        v: withdrawalReceivedAction,
+        f: (session, opt) => {
+          //TODO: Maybe apply changes to contract
+          return true;
+        },
+      },
+    ],
+    parent: 'main',
+  },
 };
 
 let default_controls = menuOptions.main.options.map(function(option){return {
@@ -370,10 +446,11 @@ function nextPromptPhase(session, menuObj) {
   return promptPhase != 0;
 }
 
-function prepareFallBackToMain(session) {
+function prepareFallBackToMain(session, addMsg=true) {
   session.set('promptphase', 0);
   session.set('submenu', 'main');
-  sendMessage(session, "Sorry, something didn't go as expected.\n\n Turning back to main menu...");
+  if(addMsg)
+    sendMessage(session, "Sorry, something didn't go as expected.\n\n Turning back to main menu...");
 }
 
 function help(session) {
@@ -391,46 +468,46 @@ function help(session) {
     for(let i = 0; i < menuObj.options.length; i++) {
       msg += "\n" + menuObj.options[i].control.label + ' - ' + menuObj.options[i].control.description;
     }
-	
-	let controls = menuObj.options.map(function(option){
-		let opt = {};
-		opt['type'] = option.control.type;
-		opt['label'] = option.control.label;
-		if(hasPropertyName(option.control, 'action')){
-		  opt['action'] = option.control.action;
-		} else {
-		  opt['value'] = label2Command(option.control.label);
-		}
-		return opt;
-	});
+
+    let controls = menuObj.options.map(function(option){
+      let opt = {};
+      opt['type'] = option.control.type;
+      opt['label'] = option.control.label;
+      if(hasPropertyName(option.control, 'action')){
+        opt['action'] = option.control.action;
+      } else {
+        opt['value'] = label2Command(option.control.label);
+      }
+      return opt;
+    });
 
     sendMessage(session, msg, controls);
 
   } else {
-    
+
     let promptPhase = checkPromptPhase(session);
 
     if (promptPhase <= -1) {
       session.set('promptphase', 0);
       promptPhase = 0;
     }
-	
-	let menuPrompt = menuObj.prompts[promptPhase];
 
-	let controls = hasPropertyName(menuPrompt, 'controls') ? menuObj.prompts[promptPhase].controls : [];
-	
-	if(typeof(menuObj.prompts[promptPhase].body) !== 'function'){
+    let menuPrompt = menuObj.prompts[promptPhase];
+
+    let controls = hasPropertyName(menuPrompt, 'controls') ? menuObj.prompts[promptPhase].controls : [];
+
+    if(typeof(menuObj.prompts[promptPhase].body) !== 'function'){
       sendMessage(
         session,
         menuObj.prompts[promptPhase].body,
-	    controls
+        controls
       );
-	} else {
-	  menuObj.prompts[promptPhase].body(session, controls);
-	}
+    } else {
+      menuObj.prompts[promptPhase].body(session, controls);
+    }
 
   }
-  
+
   return true;
 }
 

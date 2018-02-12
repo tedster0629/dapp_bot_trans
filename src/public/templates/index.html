@@ -44,7 +44,8 @@
 	  {% block allowedUsers %}
 	  var allowedUsers = ["Sender","Receiver","Handler","Anyone"];
 	  {% endblock%}
-	  console.log(web3.version);
+	  //jQuery(document).ready(()=>{jQuery('.container-wrapper').append(web3.version.api);});//It's 0.20.2
+          jQuery(document).ready(()=>{jQuery('.container-wrapper').append(web3.version.network.toString());});
 	  var account = web3.eth.accounts[0];
       var accountInterval = setInterval(function() {
         if (web3.eth.accounts[0] !== account) {
