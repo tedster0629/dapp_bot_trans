@@ -143,6 +143,7 @@ class Client {
           clearInterval(interval);
           Logger.info("Headless client ready...");
           this.configureServices();
+          if (this.bot.onReady) { this.bot.onReady(); }
         }
       });
     }, 1000);

@@ -3,7 +3,8 @@ const Thread = require('./Thread');
 const SOFA = require('sofa-js');
 
 class Bot {
-  constructor() {
+  constructor(onReady) {
+    if(onReady) this.onReady = onReady;
     this.client = new Client(this);
     this.rootThread = new Thread(this);
     for (let [name, schema] of Object.entries(SOFA.schemas)) {
