@@ -11,10 +11,108 @@
 	well as we don't make any profit when the result of this turns to be positive.
   </div>
   <div class="alert alert-success" role="alert">
-    Withdrawal-pending balance for this contract is <strong>{{ pending }}</strong> ETH
+    Withdrawal-pending balance for this contract is <strong id="pending"></strong> ETH
   </div>
   <button type="submit" class="btn btn-primary mb-3">Proceed with Withdrawal</button>
 {% endblock %}
 {% block allowedUsers %}
       var allowedUsers = ["Sender"];
-{% endblock%}
+{% endblock %}
+{% block footerScripts %}
+    <script>
+      const abiDefinition = JSON.parse('{{ nonparsedAbiDefinition | safe }}');
+      const byteCode = '{{ byteCode }}';
+      let nonce = '{{ nonce }}';
+      let fiatPriceDollars = web3.toBigNumber(1).div("{{ fiatUSDChange }}");
+      let progressStatus = 1;
+      let progressInterval;
+      let progressLimit = 95;
+
+      function updateProgressStatus(status) {
+        jQuery('.progress-bar')
+          .css('width', ++status + '%')
+          .attr('aria-valuenow', status);
+      }
+
+      function requestWithdrawal(evt) {
+
+        evt.preventDefault();
+
+        jQuery('.container-wrapper').append(
+          jQuery('<div class="alert alert-warning stay mx-2" role="alert" />')
+            .append("<strong>Please, stay in this page until the withdrawal process is completed!</strong>")
+            .append(" Otherwise we won't be able to track it...")
+        );
+
+        web3.eth.contract(abiDefinition).at("{{ contractAddress }}").withdraw(
+          {from: account, gas: 4000000},
+          (err, result) => {
+            if(!err) {
+              jQuery('.container-wrapper').append(
+                jQuery('<div class="alert alert-success success mx-2" role="alert" />')
+                  .append("<strong>Success!</strong> The withdrawal process finished successfuly.")
+              );
+              setTimeout(()=>jQuery('.stay, .success, .processing').hide(500,()=>jQuery(this).remove()),3000);
+            } else {
+              console.error(err);
+              jQuery('.container-wrapper').append(
+                jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                  .append("<strong>Error:</strong> " + err)
+              );
+            }
+          }
+        );
+      }
+
+      jQuery('button[type=submit]').on('click',() => {
+        requestWithdrawal();
+        jQuery('.container-wrapper').append(
+          jQuery('<div class="alert alert-info processing row mx-2" role="alert" />')
+            .append('<div class="col-md-auto pl-0 pr-2"><strong>Processing...</strong></div>')
+            .append(
+              jQuery('<div class="progress col-md mt-1 px-0">')
+                .append('<div class="progress-bar progress-bar-striped bg-info progress-bar-animated" role="progressbar" style="width: 1%;" aria-valuenow="1" aria-valuemin="0" aria-valuemax="100" />')
+            )
+        );
+        progressInterval = setInterval(function(){
+          updateProgressStatus(++progressStatus);
+          if(progressStatus >= progressLimit)
+            clearInterval(progressInterval);
+        }, 1000);
+      });
+
+      jQuery(window).on('load', async () => {
+
+        /*let fiatPriceDollars = parseFloat(await fetch(
+          new Request('https://api.coinmarketcap.com/v1/ticker/ethereum/?limit=10', {method: 'GET'})
+        ).then((res)=>{
+          return res.body.getReader().read();
+        }).then((stream) => {
+          return JSON.parse(String.fromCharCode.apply(null,stream.value))[0].price_usd;
+        }).catch((err)=> {
+          console.error(err);
+          jQuery('.container-wrapper').append(
+            jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+              .append("<strong>Error...</strong> Something went wrong while fetching fiat prices. Please try again later...")
+          );
+          return "-1";
+        }));
+
+        if(fiatPriceDollars <= 0) return;*/
+
+        web3.eth.contract(abiDefinition).at("{{ contractAddress }}").pendingWithdrawals(account,(err, result) => {
+          if(!err){
+            jQuery('#pending').append(web3.toBigNumber(result).div(100).div(fiatPriceDollars).toString());
+          } else {
+            jQuery('#pending').append('unknown');
+            console.error(err);
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                .append("<strong>Error:</strong> " + err)
+            );
+          }
+        });
+      });
+
+    </script>
+{% endblock %}

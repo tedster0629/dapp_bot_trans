@@ -1,9 +1,12 @@
 {% extends "index.html" %}
 {% block content %}
-  <div class="alert alert-danger" role="alert">
-    You're about to pay {{ value }} and sign a confirmation for "{{ name }}" shipment contract, stating that everything involving the shipment process is correct!
+  <div class="alert alert-warning" role="alert">
+    <p>You're about to pay <strong><span id="pending"></span> ETH</strong> -<strong><span id="pending-usd"></span>
+    USD with an exchange rate of <span id="usd-eth-rate"></span> USD/ETH</strong>- and sign a confirmation for
+    <strong>&quot;<span id="cName"></span>&quot;</strong> shipment contract, stating that everything involving the
+    shipment process is correct!</p>
   </div>
-  <form>
+  <form method="post">
 	<div class="form-group">
 	  <div class="form-check">
 	    <input class="form-check-input" type="checkbox" value="" id="userKnowsWhatsDoing" required>
@@ -12,9 +15,138 @@
 		</label>
 	  </div>
 	</div>
-	<button type="submit mb-3" class="btn btn-primary">Pay & Complete</button>
+	<button type="submit" class="btn btn-primary mb-3">Pay & Complete</button>
   </form>
 {% endblock %}
 {% block allowedUsers %}
       var allowedUsers = ["Receiver"];
-{% endblock%}
+{% endblock %}
+{% block footerScripts %}
+    <script>
+      const abiDefinition = JSON.parse('{{ nonparsedAbiDefinition | safe }}');
+      const byteCode = '{{ byteCode }}';
+      let nonce = '{{ nonce }}';
+      let fiatPriceDollars = web3.toBigNumber(1).div("{{ fiatUSDChange }}");
+      let progressStatus = 1;
+      let progressInterval;
+      let progressLimit = 95;
+      let value = 0;
+
+      function updateProgressStatus(status) {
+        jQuery('.progress-bar')
+          .css('width', ++status + '%')
+          .attr('aria-valuenow', status);
+      }
+
+      async function payAndComplete() {
+        jQuery('.container-wrapper').append(
+          jQuery('<div class="alert alert-warning stay mx-2" role="alert" />')
+            .append("<strong>Please, stay in this page until the payment process is completed!</strong>")
+            .append(" Otherwise we won't be able to track it...")
+        );
+        web3.eth.contract(abiDefinition).at("{{ contractAddress }}").setStatusCompleted({value: value, gas: 4000000},async (err, result) => {
+          if(!err){
+            console.log(result);
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-info mx-2" role="alert" />')
+                .append("<strong>Transaction: </strong> " + result)
+            );
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-info processing row mx-2" role="alert" />')
+                .append('<div class="col-md-auto pl-0 pr-2"><strong>Processing...</strong></div>')
+                .append(
+                  jQuery('<div class="progress col-md mt-1 px-0">')
+                    .append('<div class="progress-bar progress-bar-striped bg-info progress-bar-animated" role="progressbar" style="width: 1%;" aria-valuenow="1" aria-valuemin="0" aria-valuemax="100" />')
+                )
+            );
+            progressInterval = setInterval(function(){                  
+              updateProgressStatus(++progressStatus);
+              if(progressStatus >= progressLimit){
+                clearInterval(progressInterval);
+              }
+            }, 1000);
+            await web3.eth.getTransactionReceiptMined(result,500).then((receipt) => {
+              if(web3.toBigNumber(receipt.status).toNumber(10) == 0) {
+                reject("Error on Transaction...");
+              } else {
+                jQuery('.container-wrapper').append(
+                  jQuery('<div class="alert alert-success success mx-2" role="alert" />')
+                    .append("<strong>Success!</strong> Your payment was successfuly processed.")
+                );
+              }
+            }).catch((err) => {
+              console.error(err);
+              jQuery('.container-wrapper').append(
+                jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                  .append("<strong>Error:</strong> " + err)
+              );
+            }).finally(() => {
+              clearInterval(progressInterval);
+              setTimeout(()=>jQuery('.stay, .success, .processing').hide(500,()=>jQuery(this).remove()),3000);
+            });
+          } else {
+            console.error(err);
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                .append("<strong>Error:</strong> " + err)
+            );
+          }
+        });
+      }
+
+      jQuery('button[type=submit]').on('click', (evt) => {
+        evt.preventDefault();
+        payAndComplete();
+      });
+
+      jQuery(window).on('load', async () => {
+
+        /*let fiatPriceDollars = parseFloat(await fetch(
+          new Request('https://api.coinmarketcap.com/v1/ticker/ethereum/?limit=10', {method: 'GET'})
+        ).then((res)=>{
+          return res.body.getReader().read();
+        }).then((stream) => {
+          return JSON.parse(String.fromCharCode.apply(null,stream.value))[0].price_usd;
+        }).catch((err)=> {
+          console.error(err);
+          jQuery('.container-wrapper').append(
+            jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+              .append("<strong>Error...</strong> Something went wrong while fetching fiat prices. Please try again later...")
+          );
+          return "-1";
+        }));
+
+        if(fiatPriceDollars <= 0) return;*/
+
+        web3.eth.contract(abiDefinition).at("{{ contractAddress }}").getValue.call({from: account}, (err, result) => {
+          if(!err){
+            value = result;
+            jQuery('#pending').append(web3.toBigNumber(result).div(100).div(fiatPriceDollars).toString());
+            jQuery('#pending-usd').append(web3.toBigNumber(result).div(100).toString());
+            jQuery('#usd-eth-rate').append(fiatPriceDollars.toString());
+          } else {
+            jQuery('#pending').append('unknown');
+            console.error(err);
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                .append("<strong>Error:</strong> " + err)
+            );
+          }
+        });
+
+        web3.eth.contract(abiDefinition).at("{{ contractAddress }}").name((err, result) => {
+          if(!err){
+            jQuery('#cName').append(web3.toAscii(result));
+          } else {
+            jQuery('#cName').append('unknown');
+            console.error(err);
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                .append("<strong>Error:</strong> " + err)
+            );
+          }
+        });
+      });
+
+    </script>
+{% endblock %}

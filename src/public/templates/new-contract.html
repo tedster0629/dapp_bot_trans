@@ -49,3 +49,214 @@
 	<button type="submit" class="btn btn-primary mb-3">Deploy Contract</button>
   </form>
 {% endblock %}
+{% block footerScripts %}
+    <script>
+      const abiDefinition = JSON.parse('{{ nonparsedAbiDefinition | safe }}');
+      const byteCode = '{{ byteCode }}';
+      let nonce = '{{ nonce }}';
+      let progressStatus = 1;
+      let progressInterval;
+      let progressLimit = 95;
+
+      function updateProgressStatus(status) {
+        jQuery('.progress-bar')
+          .css('width', ++status + '%')
+          .attr('aria-valuenow', status);
+      }
+
+      async function submitNewContract(rAddr, hAddr, cName, cPrc) {
+
+        /*let fiatPriceDollars = parseFloat(await fetch(
+          new Request('https://api.coinmarketcap.com/v1/ticker/ethereum/?limit=10', {method: 'GET'})
+        ).then((res)=>{
+          return res.body.getReader().read();
+        }).then((stream) => {
+          return JSON.parse(String.fromCharCode.apply(null,stream.value))[0].price_usd;
+        }).catch((err)=> {
+          console.error(err);
+          jQuery('.container-wrapper').append(
+            jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+              .append("<strong>Error...</strong> Something went wrong while fetching fiat prices. Please try again later...")
+          );
+          return "-1";
+        }));
+
+        if(fiatPriceDollars <= 0) return;*/
+
+        jQuery('.container-wrapper').append(
+          jQuery('<div class="alert alert-warning stay mx-2" role="alert" />')
+            .append("<strong>Please, stay in this page until the contract is deployed!</strong>")
+            .append(" Otherwise we won't be able to track it...")
+        );
+        web3.eth.contract(abiDefinition).new(
+          rAddr,
+          hAddr,
+          web3.toBigNumber(cPrc).times(100).toString(),                           //Store Price in USD (times 100, given 2 decimal digits are allowed)
+          //web3.toWei(web3.toBigNumber(cPrc).div(fiatPriceDollars)).floor().toString(), //Store Price in ETH
+          //web3.toUtf8(cName),
+          cName,
+          {data: byteCode, from: account.toLowerCase(), gas: 4000000},
+          (err, myContract) => {
+            if(!err) {
+              if(myContract.address) {
+                jQuery.post(
+                  window.location.href,
+                  {
+                    cAddr: web3.toChecksumAddress(myContract.address),
+                    sAddr: account,
+                    rAddr: rAddr,
+                    hAddr: hAddr,
+                    n: cName,
+                    s: 0,
+                    nonce: nonce,
+                    timestamp: generateDatetimeString(0)
+                  },
+                  function(result) {
+                    if(!result.err) {
+                      jQuery('.container-wrapper').append(
+                        jQuery('<div class="alert alert-success success mx-2" role="alert" />')
+                          .append("<strong>Success!</strong> Your contract info was successfuly loaded in our database.")
+                      );
+                    } else {
+                      jQuery('.container-wrapper').append(
+                        jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                          .append("<strong>Error:</strong> " + result.res)
+                      );
+                    }
+                  }
+                ).fail(function(){
+                  jQuery('.container-wrapper').append(
+                    jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                      .append("<strong>Error...</strong> Something went wrong while uploading your contract info to our database. Please take note on the address and contact system administrator")
+                  )
+                }).always(function(){
+                  jQuery('.container-wrapper').append(
+                    jQuery('<div class="alert alert-info mx-2" role="alert" />')
+                      .append("<strong>Contract Address: </strong>" + myContract.address)
+                  );
+                  setTimeout(()=>jQuery('.stay, .success, .processing').hide(500,()=>jQuery(this).remove()),3000);
+                });
+                clearInterval(progressInterval);
+                updateProgressStatus(100);
+              } else {
+                jQuery('.container-wrapper').append(
+                  jQuery('<div class="alert alert-success mx-2" role="alert" />')
+                    .append("<strong>Transaction Address:</strong> " + myContract.transactionHash)
+                    .append(" (You might want to take note on this in case this process failed...)")
+                );
+                jQuery('.container-wrapper').append(
+                  jQuery('<div class="alert alert-info processing row mx-2" role="alert" />')
+                    .append('<div class="col-md-auto pl-0 pr-2"><strong>Processing...</strong></div>')
+                    .append(
+                      jQuery('<div class="progress col-md mt-1 px-0">')
+                        .append('<div class="progress-bar progress-bar-striped bg-info progress-bar-animated" role="progressbar" style="width: 1%;" aria-valuenow="1" aria-valuemin="0" aria-valuemax="100" />')
+                    )
+                );
+                progressInterval = setInterval(function(){                  
+                  updateProgressStatus(++progressStatus);
+                  if(progressStatus >= progressLimit){
+                    clearInterval(progressInterval);
+                  }
+                }, 1000);
+              }  
+            } else {
+              console.error(err);
+            }
+        });
+      };
+
+      jQuery('button[type=submit]').on('click',async (evt) => {
+
+        evt.preventDefault();
+        let rAddr = "0x" + jQuery('form input[name=receiver-address]').prop('value');
+        let hAddr = "0x" + jQuery('form input[name=handler-address]').prop('value');
+        let cName = jQuery('form input[name=contract-name]').prop('value');
+        let cPrc = jQuery('form input[name=contract-price]').prop('value');
+
+        let rAddrIsMultiCaps = /[A-F]/.test(rAddr) && /[a-f]/.test(rAddr);
+        let hAddrIsMultiCaps = /[A-F]/.test(hAddr) && /[a-f]/.test(hAddr);
+        let rAddrIsChecksumCompliant = rAddr === web3.toChecksumAddress(rAddr);
+        let hAddrIsChecksumCompliant = hAddr === web3.toChecksumAddress(hAddr);
+
+        if(!rAddrIsChecksumCompliant && rAddrIsMultiCaps) {
+          if(!await swal({
+            text:(
+            "Given \"Receiver's Address\" doesn't comply with EIP-55 authenticity checksum. We " +
+            "strongly recommend checking this input before continuing. Press OK to continue with " +
+            "the deployment process (only if you understand the risks)."),
+            buttons: ["Cancel", "OK"],
+            icon: "warning",
+            closeOnClickOutside: false})
+          ) return;
+        }
+
+        if(!rAddrIsChecksumCompliant && !rAddrIsMultiCaps) {
+          if(!await swal({
+            text:(
+            "You are not using EIP-55 format for \"Receiver's Address\" input, so we cannot " +
+            "check mistyping issues. We strongly recommend checking this input format before " +
+            "continuing. Press OK to continue with the deployment process (only if you understand " +
+            "the risks)."),
+            buttons: ["Cancel", "OK"],
+            icon: "warning",
+            closeOnClickOutside: false})
+          ) return;
+        }
+
+        if(rAddrIsChecksumCompliant && !rAddrIsMultiCaps) {
+          if(!await swal({
+            text:(
+            "Given some singularities regarding \"Receiver's Address\" input, we won't be able " +
+            "to check mistyping issues. We strongly recommend checking this input format before " +
+            "continuing. Press OK to continue with the deployment process (only if you understand " +
+            "the risks)."),
+            buttons: ["Cancel", "OK"],
+            icon: "warning",
+            closeOnClickOutside: false})
+          ) return;
+        }
+
+        if(!hAddrIsChecksumCompliant && hAddrIsMultiCaps) {
+          if(!await swal({
+            text:(
+            "Given \"Handler's Address\" doesn't comply with EIP-55 authenticity checksum. We " +
+            "strongly recommend checking this input before continuing. Press OK to continue with " +
+            "the deployment process (only if you understand the risks)."),
+            buttons: ["Cancel", "OK"],
+            icon: "warning",
+            closeOnClickOutside: false})
+          ) return;
+        }
+
+        if(!hAddrIsChecksumCompliant && !hAddrIsMultiCaps) {
+          if(!await swal({
+            text:(
+            "You are not using EIP-55 format for \"Handler's Address\" input, so we cannot " +
+            "check mistyping issues. We strongly recommend checking this input format before " +
+            "continuing. Press OK to continue with the deployment process (only if you understand " +
+            "the risks)."),
+            buttons: ["Cancel", "OK"],
+            icon: "warning",
+            closeOnClickOutside: false})
+          ) return;
+        }
+
+        if(hAddrIsChecksumCompliant && !hAddrIsMultiCaps) {
+          if(!await swal({
+            text:(
+            "Given some singularities regarding \"Handler's Address\" input, we won't be able " +
+            "to check mistyping issues. We strongly recommend checking this input format before " +
+            "continuing. Press OK to continue with the deployment process (only if you understand " +
+            "the risks)."),
+            buttons: ["Cancel", "OK"],
+            icon: "warning",
+            closeOnClickOutside: false})
+          ) return;
+        }
+        
+        submitNewContract(web3.toChecksumAddress(rAddr), web3.toChecksumAddress(hAddr), cName, cPrc);
+        
+      });
+
+    </script>
+{% endblock %}
