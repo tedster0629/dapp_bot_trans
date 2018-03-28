@@ -64,7 +64,7 @@
           .attr('aria-valuenow', status);
       }
 
-      async function submitNewContract(rAddr, hAddr, cName, cPrc) {
+      function submitNewContract(rAddr, hAddr, cName, cPrc) {
 
         /*let fiatPriceDollars = parseFloat(await fetch(
           new Request('https://api.coinmarketcap.com/v1/ticker/ethereum/?limit=10', {method: 'GET'})
@@ -88,15 +88,29 @@
             .append("<strong>Please, stay in this page until the contract is deployed!</strong>")
             .append(" Otherwise we won't be able to track it...")
         );
+
+        //let prc_ = web3.toWei(web3.toBigNumber(cPrc).div(fiatPriceDollars)).floor().toString(), //Store Price in ETH
+        let prc_ = web3.toBigNumber(cPrc).times(100).toString();//Store Price in USD (times 100, given 2 decimal digits are allowed)
+
+        let data_ = {data: byteCode, from: account.toLowerCase(), gas: "4000000", gasPrice: "40000000000", value: "0x0"};//, to: ""};
+
+        console.log("Calling web3.js constructor");
+        //console.log("AbiDefinition: " + JSON.stringify(abiDefintion));
+        console.log("rAddr:         " + rAddr);
+        console.log("hAddr:         " + hAddr);
+        console.log("Price:         " + prc_.toString());
+        console.log("cName:         " + cName);
+        console.log("Data:          " + JSON.stringify(data_));
+        console.log("web3.eth PropertyNames: " + JSON.stringify(Object.getOwnPropertyNames(web3.eth)));
         web3.eth.contract(abiDefinition).new(
           rAddr,
           hAddr,
-          web3.toBigNumber(cPrc).times(100).toString(),                           //Store Price in USD (times 100, given 2 decimal digits are allowed)
-          //web3.toWei(web3.toBigNumber(cPrc).div(fiatPriceDollars)).floor().toString(), //Store Price in ETH
-          //web3.toUtf8(cName),
+          prc_,
           cName,
-          {data: byteCode, from: account.toLowerCase(), gas: 4000000},
-          (err, myContract) => {
+          data_, function (err, myContract) {
+            console.log("Calling constructor's callback.");
+            console.log("ERR=" + (err || "None"));
+            console.log("MYCONTRACT=" + (myContract || "None"));
             if(!err) {
               if(myContract.address) {
                 jQuery.post(
@@ -179,19 +193,20 @@
         let hAddrIsChecksumCompliant = hAddr === web3.toChecksumAddress(hAddr);
 
         if(!rAddrIsChecksumCompliant && rAddrIsMultiCaps) {
-          if(!await swal({
+          let res = await swal({
             text:(
             "Given \"Receiver's Address\" doesn't comply with EIP-55 authenticity checksum. We " +
             "strongly recommend checking this input before continuing. Press OK to continue with " +
             "the deployment process (only if you understand the risks)."),
             buttons: ["Cancel", "OK"],
             icon: "warning",
-            closeOnClickOutside: false})
-          ) return;
+            closeOnClickOutside: false
+          });
+          if(!res) return;
         }
 
         if(!rAddrIsChecksumCompliant && !rAddrIsMultiCaps) {
-          if(!await swal({
+          let res = await swal({
             text:(
             "You are not using EIP-55 format for \"Receiver's Address\" input, so we cannot " +
             "check mistyping issues. We strongly recommend checking this input format before " +
@@ -199,12 +214,13 @@
             "the risks)."),
             buttons: ["Cancel", "OK"],
             icon: "warning",
-            closeOnClickOutside: false})
-          ) return;
+            closeOnClickOutside: false
+          });
+          if(!res) return;
         }
 
         if(rAddrIsChecksumCompliant && !rAddrIsMultiCaps) {
-          if(!await swal({
+          let res = await swal({
             text:(
             "Given some singularities regarding \"Receiver's Address\" input, we won't be able " +
             "to check mistyping issues. We strongly recommend checking this input format before " +
@@ -212,24 +228,26 @@
             "the risks)."),
             buttons: ["Cancel", "OK"],
             icon: "warning",
-            closeOnClickOutside: false})
-          ) return;
+            closeOnClickOutside: false
+          });
+          if(!res) return;
         }
 
         if(!hAddrIsChecksumCompliant && hAddrIsMultiCaps) {
-          if(!await swal({
+          let res = await swal({
             text:(
             "Given \"Handler's Address\" doesn't comply with EIP-55 authenticity checksum. We " +
             "strongly recommend checking this input before continuing. Press OK to continue with " +
             "the deployment process (only if you understand the risks)."),
             buttons: ["Cancel", "OK"],
             icon: "warning",
-            closeOnClickOutside: false})
-          ) return;
+            closeOnClickOutside: false
+          });
+          if(!res) return;
         }
 
         if(!hAddrIsChecksumCompliant && !hAddrIsMultiCaps) {
-          if(!await swal({
+          let res = await swal({
             text:(
             "You are not using EIP-55 format for \"Handler's Address\" input, so we cannot " +
             "check mistyping issues. We strongly recommend checking this input format before " +
@@ -237,12 +255,13 @@
             "the risks)."),
             buttons: ["Cancel", "OK"],
             icon: "warning",
-            closeOnClickOutside: false})
-          ) return;
+            closeOnClickOutside: false
+          });
+          if(!res) return;
         }
 
         if(hAddrIsChecksumCompliant && !hAddrIsMultiCaps) {
-          if(!await swal({
+          let res = await swal({
             text:(
             "Given some singularities regarding \"Handler's Address\" input, we won't be able " +
             "to check mistyping issues. We strongly recommend checking this input format before " +
@@ -250,8 +269,9 @@
             "the risks)."),
             buttons: ["Cancel", "OK"],
             icon: "warning",
-            closeOnClickOutside: false})
-          ) return;
+            closeOnClickOutside: false
+          });
+          if(!res) return;
         }
         
         submitNewContract(web3.toChecksumAddress(rAddr), web3.toChecksumAddress(hAddr), cName, cPrc);

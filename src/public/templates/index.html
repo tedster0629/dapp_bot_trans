@@ -6,12 +6,17 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 	<!--<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">-->
 	<link rel="stylesheet" type="text/css" href="stylesheets/bootstrap.css">
+        <script src="http://{{ MYIP }}:1337/vorlon.js"></script>
 	{% block title %}
 	  <title>Logistics 3.0</title>
 	{% endblock %}
         <style>
           .alert {
             word-break: break-all;
+          }
+          .inactiveLink {
+            pointer-events: none;
+            cursor: default;
           }
         </style>
   </head>
@@ -54,11 +59,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
     <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js" integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
+    <script src="https://cdn.ravenjs.com/3.23.3/raven.min.js" crossorigin="anonymous"></script>
 	<script type="text/javascript">
+          Raven.config('https://96c187ebc89c413080005d989394884e@sentry.io/305185').install();
           {% block allowedUsers %}
           var allowedUsers = ["Sender","Receiver","Handler","Anyone"];
           {% endblock%}
-          //jQuery(document).ready(()=>{jQuery('.container-wrapper').append(web3.version.api);});//It's 0.20.2
+          jQuery(document).ready(()=>{console.log("Web3 API Version: " + web3.version.api);});//It's 0.20.2
           //jQuery(document).ready(()=>{jQuery('.container-wrapper').append(web3.version.network.toString());});
           var account = web3.toChecksumAddress(web3.eth.accounts[0]);
           var accountInterval = setInterval(function() {
@@ -98,7 +105,7 @@
             }
           };
 
-          window.onerror = function(message, file, line, col, error) {
+          /*window.onerror = function(message, file, line, col, error) {
             jQuery('.container-wrapper').append(
               jQuery('<div class="alert alert-danger mx-2" role="alert" />')
                 .append("<strong>System Error:</strong> " + message + "(FILE: " + file + ", L: " + line + ").")
@@ -107,7 +114,7 @@
               jQuery('<div class="alert alert-danger mx-2" role="alert" />')
                 .append("<strong>Stack:</strong>\n" + error.stack)
             );
-          };
+          };*/
 
           Date.prototype.addHours = function(h) {
             this.setTime(this.getTime() + (h*60*60*1000));

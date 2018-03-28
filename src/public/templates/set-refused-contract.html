@@ -1,7 +1,7 @@
 {% extends "index.html" %}
 {% block content %}
   <div class="alert alert-danger" role="alert">
-    You're about to cancel "{{ name }}" shipment contract, and refusing to pay for and keep the article(s)
+    You're about to cancel "{{ contractName }}" shipment contract, and refusing to pay for and keep the article(s)
   </div>
   <form>
 	<div class="form-group">
@@ -17,4 +17,113 @@
 {% endblock %}
 {% block allowedUsers %}
       var allowedUsers = ["Receiver"];
-{% endblock%}
+{% endblock %}
+{% block footerScripts %}
+    <script>
+      const abiDefinition = JSON.parse('{{ nonparsedAbiDefinition | safe }}');
+      const byteCode = '{{ byteCode }}';
+      const contractAddress = "{{ contractAddress }}";
+      let nonce = '{{ nonce }}';
+      let progressStatus = 1;
+      let progressInterval;
+      let progressLimit = 95;
+      let value = 0;
+
+      function updateProgressStatus(status) {
+        jQuery('.progress-bar')
+          .css('width', ++status + '%')
+          .attr('aria-valuenow', status);
+      }
+
+      async function setAsRefused() {
+        jQuery('.container-wrapper').append(
+          jQuery('<div class="alert alert-warning stay mx-2" role="alert" />')
+            .append("<strong>Please, stay in this page until the payment process is completed!</strong>")
+            .append(" Otherwise we won't be able to track it...")
+        );
+        web3.eth.contract(abiDefinition).at(contractAddress).setStatusRefused({value: value, gas: 4000000},async (err, result) => {
+          if(!err){
+            console.log(result);
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-info mx-2" role="alert" />')
+                .append("<strong>Transaction ID: </strong> " + result)
+            );
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-info processing row mx-2" role="alert" />')
+                .append('<div class="col-md-auto pl-0 pr-2"><strong>Processing...</strong></div>')
+                .append(
+                  jQuery('<div class="progress col-md mt-1 px-0">')
+                    .append('<div class="progress-bar progress-bar-striped bg-info progress-bar-animated" role="progressbar" style="width: 1%;" aria-valuenow="1" aria-valuemin="0" aria-valuemax="100" />')
+                )
+            );
+            progressInterval = setInterval(function(){
+              updateProgressStatus(++progressStatus);
+              if(progressStatus >= progressLimit){
+                clearInterval(progressInterval);
+              }
+            }, 1000);
+            await web3.eth.getTransactionReceiptMined(result,500).then(async (receipt) => {
+              if(web3.toBigNumber(receipt.status).toNumber(10) == 0) {
+                throw "<strong>Error on Transaction...</strong> Please take note on the transaction id and contact system administrator.";
+              } else {
+                jQuery('.container-wrapper').append(
+                  jQuery('<div class="alert alert-success mx-2" role="alert" />')
+                    .append("<strong>Success!</strong> Your payment was successfuly processed.")
+                );
+                await jQuery.post(
+                  window.location.href,
+                  {
+                    cAddr: contractAddress,
+                    rAddr: account,
+                    nonce: nonce,
+                  },
+                  function(result) {
+                    if(!result.err) {
+                      jQuery('.container-wrapper').append(
+                        jQuery('<div class="alert alert-success mx-2" role="alert" />')
+                          .append("<strong>Success!</strong> Your contract status info was successfuly loaded in our database.")
+                      );
+                    } else {
+                      jQuery('.container-wrapper').append(
+                        jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                          .append("<strong>Error:</strong> " + result.res)
+                      );
+                    }
+                  }
+                ).fail(function(){
+                  jQuery('.container-wrapper').append(
+                    jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                      .append("<strong>Error...</strong> Something went wrong while updating your contract status info to our database. Please take note on the transaction id and contact system administrator")
+                  );
+                }).always(function(){
+                  clearInterval(progressInterval);
+                  setTimeout(()=>jQuery('.stay, .success, .processing').hide(500,()=>jQuery(this).remove()),10000);
+                });
+              }
+            }).catch((err) => {
+              console.error(err);
+              jQuery('.container-wrapper').append(
+                jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                  .append("<strong>Error:</strong> " + err)
+              );
+            }).finally(() => {
+              clearInterval(progressInterval);
+              setTimeout(()=>jQuery('.stay, .success, .processing').hide(500,()=>jQuery(this).remove()),10000);
+            });
+          } else {
+            console.error(err);
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                .append("<strong>Error:</strong> " + err)
+            );
+          }
+        });
+      }
+
+      jQuery('button[type=submit]').on('click', (evt) => {
+        evt.preventDefault();
+        setAsRefused();
+      });
+
+    </script>
+{% endblock %}

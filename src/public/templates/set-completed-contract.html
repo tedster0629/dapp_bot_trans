@@ -25,6 +25,7 @@
     <script>
       const abiDefinition = JSON.parse('{{ nonparsedAbiDefinition | safe }}');
       const byteCode = '{{ byteCode }}';
+      const contractAddress = "{{ contractAddress }}";
       let nonce = '{{ nonce }}';
       let fiatPriceDollars = web3.toBigNumber(1).div("{{ fiatUSDChange }}");
       let progressStatus = 1;
@@ -44,12 +45,12 @@
             .append("<strong>Please, stay in this page until the payment process is completed!</strong>")
             .append(" Otherwise we won't be able to track it...")
         );
-        web3.eth.contract(abiDefinition).at("{{ contractAddress }}").setStatusCompleted({value: value, gas: 4000000},async (err, result) => {
+        web3.eth.contract(abiDefinition).at(contractAddress).setStatusCompleted({value: value, gas: 4000000},async (err, result) => {
           if(!err){
             console.log(result);
             jQuery('.container-wrapper').append(
               jQuery('<div class="alert alert-info mx-2" role="alert" />')
-                .append("<strong>Transaction: </strong> " + result)
+                .append("<strong>Transaction ID: </strong> " + result)
             );
             jQuery('.container-wrapper').append(
               jQuery('<div class="alert alert-info processing row mx-2" role="alert" />')
@@ -65,14 +66,43 @@
                 clearInterval(progressInterval);
               }
             }, 1000);
-            await web3.eth.getTransactionReceiptMined(result,500).then((receipt) => {
+            await web3.eth.getTransactionReceiptMined(result,500).then(async (receipt) => {
               if(web3.toBigNumber(receipt.status).toNumber(10) == 0) {
-                reject("Error on Transaction...");
+                throw "<strong>Error on Transaction...</strong> Please take note on the transaction id and contact system administrator.";
               } else {
                 jQuery('.container-wrapper').append(
-                  jQuery('<div class="alert alert-success success mx-2" role="alert" />')
+                  jQuery('<div class="alert alert-success mx-2" role="alert" />')
                     .append("<strong>Success!</strong> Your payment was successfuly processed.")
                 );
+                await jQuery.post(
+                  window.location.href,
+                  {
+                    cAddr: contractAddress,
+                    rAddr: account,
+                    nonce: nonce,
+                  },
+                  function(result) {
+                    if(!result.err) {
+                      jQuery('.container-wrapper').append(
+                        jQuery('<div class="alert alert-success mx-2" role="alert" />')
+                          .append("<strong>Success!</strong> Your contract status info was successfuly loaded in our database.")
+                      );
+                    } else {
+                      jQuery('.container-wrapper').append(
+                        jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                          .append("<strong>Error:</strong> " + result.res)
+                      );
+                    }
+                  }
+                ).fail(function(){
+                  jQuery('.container-wrapper').append(
+                    jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                      .append("<strong>Error...</strong> Something went wrong while updating your contract status info to our database. Please take note on the transaction id and contact system administrator.")
+                  );
+                }).always(function(){
+                  clearInterval(progressInterval);
+                  setTimeout(()=>jQuery('.stay, .success, .processing').hide(500,()=>jQuery(this).remove()),10000);
+                });
               }
             }).catch((err) => {
               console.error(err);
@@ -82,7 +112,7 @@
               );
             }).finally(() => {
               clearInterval(progressInterval);
-              setTimeout(()=>jQuery('.stay, .success, .processing').hide(500,()=>jQuery(this).remove()),3000);
+              setTimeout(()=>jQuery('.stay, .success, .processing').hide(500,()=>jQuery(this).remove()),10000);
             });
           } else {
             console.error(err);

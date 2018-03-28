@@ -22,6 +22,8 @@ const bodyParser = require('body-parser');
 const PsqlStore = require('./PsqlStore');
 const Web3 = require('web3');
 
+const chalk = require('chalk');
+
 let web3 = new Web3();
 
 /*Implement additional addHours method for Date object*/
@@ -31,7 +33,39 @@ Date.prototype.addHours = function(h) {
 }
 
 function generateDatetimeString(offsetHours) {
-  return new Date().addHours(offsetHours).toISOString().slice(0, 19).replace('T', ' ');
+  return new Date().addHours(offsetHours || 0).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+const printError = (...messages) => {
+  console.error(Logger.color(' ',
+    "[ERR: " + generateDatetimeString() + " ]" +
+    (messages.length > 1 ? "\n  " : "  ") +
+    messages.map((msg)=> hasPropertyName(msg, 'stack')? msg.stack : msg).map(String).join("\n  ")
+  , chalk.red));
+}
+
+const printInfo = (...messages) => {
+  console.info(Logger.color(' ',
+    "[INF: " + generateDatetimeString() + " ]" +
+    (messages.length > 1 ? "\n  " : "  ") +
+    messages.map(String).join("\n  ")
+  , chalk.yellow));
+}
+
+const printWarning = (...messages) => {
+  console.warn(Logger.color(' ',
+    "[WRN: " + generateDatetimeString() + " ]" + 
+    (messages.length > 1 ? "\n  " : "  ") +
+    messages.map(String).join("\n  ")
+  , chalk.orange));
+}
+
+const printLog = (...messages) => {
+  console.log(Logger.color(' ',
+    "[LOG: " + generateDatetimeString() + " ]" +
+    (messages.length > 1 ? "\n  " : "  ") +
+    messages.map(String).join("\n  ")
+  , chalk.green));
 }
 
 const DEFAULT_FUNC = () => {return true;};
@@ -40,7 +74,6 @@ const code = fs.readFileSync(path.join(__dirname, '..', 'dapp_src', 'new_logisti
 const compiledCode = solc.compile(code);
 const nonparsedAbiDefinition = compiledCode.contracts[':Shipment'].interface;
 const byteCode = compiledCode.contracts[':Shipment'].bytecode;
-//const contractTx = web3.eth.contract(abiDefinition);
 
 const monthCode2Nr = {
   Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12
@@ -48,13 +81,14 @@ const monthCode2Nr = {
 
 let bot = new Bot(() => {
   bot.dbStore = new PsqlStore(bot.client.config.storage.postgres.url, process.env.STAGE || 'development');
-  bot.dbStore.initialize(DATABASE_TABLES).then(() => {Logger.info("Database correctly set!");}).catch((err) => {
-    Logger.error(err);
+  bot.dbStore.initialize(DATABASE_TABLES).then(() => {printLog("Database correctly set!");}).catch((err) => {
+    printError(err);
   });
 });
 let botAddress = bot.client.toshiIdAddress;
 
 const DATABASE_TABLES = `
+DROP TABLE IF EXISTS nonces;
 CREATE TABLE IF NOT EXISTS contracts (
     contract_address VARCHAR(42) PRIMARY KEY,
     contract_name VARCHAR(32),
@@ -70,6 +104,16 @@ CREATE TABLE IF NOT EXISTS nonces (
     nonce VARCHAR(64),
     validity TIMESTAMP NOT NULL
 );
+CREATE TABLE IF NOT EXISTS addresses (
+   address VARCHAR(42) PRIMARY KEY,
+   userID INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+    userID SERIAL PRIMARY KEY,
+    username VARCHAR(64) NOT NULL,
+    email VARCHAR(128) NOT NULL,
+    avatar VARCHAR(64) NOT NULL DEFAULT ''
+);
 `;
 
 const expressOptions = {
@@ -84,29 +128,15 @@ const expressOptions = {
   }
 };
 
-const expressNavbarOptions = {
-  sender: [
-    {name: "Home", href: "/", isCurrent: true, isDisabled: false},
-    {name: "Create New Contract", href: "/new-contract", isCurrent: false, isDisabled: false},
-    {name: "Withdraw Funds", href: "/withdrawal", isCurrent: false, isDisabled: false},
-  ],
-  handler: [
-    {name: "Home", href: "/", isCurrent: true, isDisabled: false},
-    {name: "Create New Contract", href: "/new-contract", isCurrent: false, isDisabled: false},
-  ],
-  receiver: [
-    {name: "Home", href: "/", isCurrent: true, isDisabled: false},
-    {name: "Create New Contract", href: "/new-contract", isCurrent: false, isDisabled: false},
-    {name: "This Contract", isCurrent: false, isDisabled: false, options: [
-      {name: "Set as Completed", href: "/set-completed-contract", isCurrent: false, isDisabled: false},
-      {name: "Set as Refused", href: "/set-refused-contract", isCurrent: false, isDisabled: false},
-    ]},
-  ],
-  anyone: [
-    {name: "Home", href: "/", isCurrent: true, isDisabled: false},
-    {name: "Create New Contract", href: "/new-contract", isCurrent: false, isDisabled: false},
-  ],
-};
+const submenus = [
+  {name: "Home", href: "/", permittedRoles: ["any"], permittedStatuses: ["any"]},
+  {name: "Create New Contract", href: "/new-contract", permittedRoles: ["any"], permittedStatuses: ["any"]},
+  {name: "This Contract", options: [
+    {name: "Set as Completed", href: "/set-completed-contract", permittedRoles: ["receiver"], permittedStatuses: [0]},
+    {name: "Set as Refused", href: "/set-refused-contract", permittedRoles: ["receiver"], permittedStatuses: [0]},
+    {name: "Withdraw", href: "/withdrawal", permittedRoles: ["sender"], permittedStatuses: [1]},
+  ]},
+];
 
 function Get(yourUrl){
     var Httpreq = new XMLHttpRequest();
@@ -116,21 +146,70 @@ function Get(yourUrl){
 }
 
 function hasPropertyName(obj, name) {
-	return typeof(obj) !== 'undefined' ? Object.getOwnPropertyNames(obj).indexOf(name) > -1 : false;
+    return typeof(obj) !== 'undefined' ? Object.getOwnPropertyNames(obj).indexOf(name) > -1 : false;
 }
 
-function generateNavbarOptions(req) {
-  return expressNavbarOptions.anyone;
-}
+const generateNavbarOptions = async (req, isContractSpecific) => {
 
-async function maybeCreateAndRegisterNonce(session) {
-  let possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let nonce = Array.from({length: 64},(_, n) => n+1).map(
+  isContractSpecific = typeof(isContractSpecific) !== 'undefined' ? Boolean(isContractSpecific) : true;
+
+  let nncInB = nonceInBody(req), nncInQ = nonceInQuery(req);
+  let contract = req.query.cAddr || '';
+  let contractStatus = (isContractSpecific && contract.length > 0) ? await retrieveContractStatus(contract) : '';
+  let nonce = nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
+  let user = (await checkNonce(nonce)).address || await maybeSetNonceAndRetrieveUser(req);
+  let userRoles = (isContractSpecific && contract.length > 0) ? await retrieveUserRoles(user, contract) : ["any"];
+
+  let urlAttributes = [{name: "nonce", value: nonce}];
+  urlAttributes = contract.length > 0 ? urlAttributes.concat({name: "cAddr", value: contract}) : urlAttributes;
+
+  const currentReducer = (res, opt, i) => {
+    return res || (hasPropertyName(opt,'isCurrent') && opt['isCurrent']);
+  };
+
+  const enabledReducer = (res, opt, i) => {
+    return res || (hasPropertyName(opt,'isDisabled') && !opt['isDisabled']);
+  };
+
+  const urlAttributeReducer = (res, opt, i) => {
+    return res + (/\?/.test(res) ? "&" : "?") + opt.name + "=" + opt.value;
+  };
+
+  const menuReducer = (res, opt, i) => {
+    let isParentMenu = hasPropertyName(opt,'options');
+    let userHasRole = isParentMenu || opt.permittedRoles.indexOf("any") >= 0 || userRoles.reduce(userRoleReducer(opt.permittedRoles), false);
+    let contractHasStatus = isParentMenu || opt.permittedStatuses.indexOf("any") >= 0 || opt.permittedStatuses.indexOf(contractStatus) >= 0;
+    if(userHasRole) {
+      let option = {name: opt.name};
+      if(isParentMenu) {
+        let options = opt.options.reduce(menuReducer, []);
+        if(options.length == 0) return res;
+        option['options'] = options;
+        option['isCurrent'] = option.options.reduce(currentReducer, false);
+        option['isDisabled'] = !option.options.reduce(enabledReducer, false);
+      } else {
+        option['href'] = urlAttributes.reduce(urlAttributeReducer, opt.href);
+        option['isCurrent'] = req.route.path === opt.href;
+        option['isDisabled'] = !contractHasStatus;
+      }
+      res = res.concat(option);
+    }
+    return res;
+  };
+
+  let permittedSubmenus = submenus.reduce(menuReducer, []);
+  return permittedSubmenus;
+};
+
+function createRandomString(length, possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789") {
+  return Array.from({length: length},(_, n) => n+1).map(
     ()=>possible[Math.floor(possible.length * Math.random())]
   ).join('');
+};
+
+async function maybeCreateAndRegisterNonce(session) {
+  let nonce = createRandomString(64);
   let success = false;
-  //Logger.info("USER SESSION PROPERTIES: " + Object.getOwnPropertyNames(session.user));
-  //Logger.info("PAYMENT ADDRESS:         " + session.user.payment_address);
   let result = await bot.dbStore.fetchval(
     "SELECT nonce FROM nonces WHERE address = $1 AND validity >= $2 :: timestamp",
     [
@@ -150,13 +229,9 @@ async function maybeCreateAndRegisterNonce(session) {
         generateDatetimeString(8)
       ]
     ).then(()=>{
-      Logger.info("Nonce successfuly created!");
       return nonce;
     }).catch((err)=>{
-      Logger.error("Error while creating new nonce...\n");
-      console.error("Error while creating new nonce...\n");
-      Logger.error(err);
-      console.error(err);
+      printError("Error while creating new nonce...", err);
       return false;
     });
   } else {
@@ -164,15 +239,13 @@ async function maybeCreateAndRegisterNonce(session) {
   }
 }
 
-function checkNonce(nonce) {
+const checkNonce = async (nonce) => {
   let result = false;
-  return bot.dbStore.fetchrow(
+  return await bot.dbStore.fetchrow(
     "SELECT * FROM nonces WHERE nonce = $1",
     [nonce]
   ).then((nonce)=>{
-    //Logger.info("Validity:   " + String(nonce.validity));
     let v = (nonce == null) ? false : String(nonce.validity).split(/[- :]/);
-    //Logger.info("Date:       " + String(new Date()));
     return v ? (
       new Date(Date.UTC(v[3], monthCode2Nr[v[1]]-1, v[2], v[4], v[5], v[6])).getTime() >= new Date().getTime() ?
         {address: web3.utils.toChecksumAddress(nonce.address), toshi_id: nonce.toshi_id} :
@@ -180,15 +253,12 @@ function checkNonce(nonce) {
       ) :
       false;
   }).catch((err)=>{
-    Logger.error("Error validating nonce...\n");
-    console.error("Error validating nonce...\n");
-    Logger.error(err);
-    console.error(err);
+    printError("Error validating nonce...", err);
     return false;
   });
-}
+};
 
-async function maybeSetNonceAndRetrieveUser(req) {
+const maybeSetNonceAndRetrieveUser = async (req) => {
   let inQuery = hasPropertyName(req.query, 'nonce');
   let inSession = hasPropertyName(req.session, 'nonce');
   let res = false;
@@ -202,17 +272,19 @@ async function maybeSetNonceAndRetrieveUser(req) {
     req.session.toshi_id = res.toshi_id;
     req.session.payment_address = res.address;
     req.session.save(Logger.error)
-    Logger.info("Nonce: " + String(req.session.nonce));
   }
   return res.address;
-}
-
-function retrieveContractAttributes(contract) {
-  
-}
+};
 
 const MYIP = JSON.parse(Get("https://jsonip.com")).ip;
-const upload = multer();
+const storage = multer.diskStorage({
+  destination: "/uploads",
+  filename: (req, file, callback) => {
+    let extname = path.extname(file.originalname);
+    callback(null, createRandomString(64 - extname.length - 8) + extname);
+  }
+});
+const upload = multer({storage: storage});
 
 const redisUrl = process.env.REDIS_URL;
 const redisPort = parseInt(redisUrl.split(':')[-1]);
@@ -241,31 +313,139 @@ env.addFilter('istype', function(obj, type_) {
 });
 
 env.addFilter('washere', function(obj) {
-    console.log(obj.toString());
+    printLog(obj.toString());
     return obj;
 });
 
-const asyncMiddleware = fn =>
-  (req, res, next) => {
+const asyncMiddleware = fn => {
+  return (req, res, next) => {
     Promise.resolve(fn(req, res, next))
       .catch(next);
   };
+};
+
+const retrieveUserRoles = async (user, contract) => {
+  return await bot.dbStore.fetchrow(
+    "SELECT sender_address, handler_address, receiver_address FROM contracts WHERE contract_address = $1;",
+    [contract]
+  ).then((result) => {
+    let roles = [];
+    if(result.sender_address === user) roles = roles.concat(['sender']);
+    if(result.handler_address === user) roles = roles.concat(['handler']);
+    if(result.receiver_address === user) roles = roles.concat(['receiver']);
+    return roles.length > 0 ? roles : ["any"];
+  }).catch((err) => {
+    printError("Error retrieving user role:", err);
+    return "any";
+  });
+};
+
+const retrieveContractStatus = async (contract) =>  {
+  return await bot.dbStore.fetchrow(
+    "SELECT contract_status FROM contracts WHERE contract_address = $1;",
+    [contract]
+  ).then((result) => {
+    return result.contract_status;
+  }).catch((err) => {
+    printError("Error retrieving contract status:", err);
+    return "any";
+  });
+};
+
+const userRoleReducer = (permittedRoles) => {
+  return (res, role, i) => {
+    return res || permittedRoles.indexOf(role) >= 0;
+  };
+};
+
+const nonceInBody = (req) => {
+  return hasPropertyName(req, 'body') ? (hasPropertyName(req.body, 'nonce') && req.body.nonce.length > 0 && typeof(req.body.nonce) !== 'undefined') : false;
+};
+
+const nonceInQuery = (req) => {
+  return hasPropertyName(req, 'query') ? (hasPropertyName(req.query, 'nonce') && req.query.nonce.length > 0 && typeof(req.query.nonce) !== 'undefined') : false;
+};
+
+const checkPermissions = async (req, res, checkNonceIO, permittedRoles, compatibleContractStatus) => {
+
+  permittedRoles = Array.isArray(permittedRoles) ? permittedRoles : [].concat(permittedRoles);
+  compatibleContractStatus = Array.isArray(compatibleContractStatus) ? compatibleContractStatus : [].concat(compatibleContractStatus);
+
+  let nonce, user, contract, userRoles, contractStatus;
+  let nncInB = nonceInBody(req), nncInQ = nonceInQuery(req);
+
+  let conditions = [
+    {
+      name: "has_nonce",
+      f: async () => {
+        if(!checkNonceIO) return true;
+        return nncInB || nncInQ;
+      }
+    },
+    {
+      name: "nonce_validity",
+      f: async () => {
+        if(!checkNonceIO) return true;
+        nonce = nonce || nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
+        user = user || (await checkNonce(nonce)).address;
+        return Boolean(user);
+      }
+    },
+    {
+      name: "user_registered",
+      f: async () => {
+        nonce = nonce || nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
+        user = user || (await checkNonce(nonce)).address || await maybeSetNonceAndRetrieveUser(req);
+        return Boolean(user || await maybeCreateAndRegisterNonce(req.session));
+      }
+    },
+    {
+      name: "user_has_permission",
+      f: async () => {
+        if(permittedRoles.indexOf("any") >= 0) return true;
+        contract = contract || req.query.cAddr || '';
+        nonce = nonce || nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
+        user = user || (await checkNonce(nonce)).address || await maybeSetNonceAndRetrieveUser(req);
+        userRoles = userRoles || await retrieveUserRoles(user, contract);
+        return userRoles.reduce(userRoleReducer(permittedRoles), false);
+      }
+    },
+    {
+      name: "contract_status_compatible",
+      f: async () => {
+        if(compatibleContractStatus.indexOf("any") >= 0) return true;
+        contract = contract || req.query.cAddr || '';
+        contractStatus = contractStatus || await retrieveContractStatus(contract);
+        return compatibleContractStatus.indexOf(contractStatus) >= 0;
+      }
+    }
+  ];
+
+  let conditionReducer = async (res, cond, i) =>  {
+    return await res === "" ? (await cond.f() ? "" : cond.name) : res;
+  };
+
+  let result = await conditions.reduce(conditionReducer, "");
+  if(result) {
+    res.json({res:'Access denied! Unmet criterium: ' + result, err: true});
+    return false;
+  }
+
+  return true;
+};
 
 app.get('/', upload.array(), asyncMiddleware( async (req, res, next) => {
-  //let user;
-  //if(!(user = await maybeSetNonceAndRetrieveUser(req)) || !await maybeCreateAndRegisterNonce(req.session)) {
-  //  res.send('Access denied! Please access through Toshi');
-  //  return;
-  //}
+  if(!await checkPermissions(req, res, false, "any", "any")) return;
   let opts = {};
   let contract = req.query.cAddr || '';
-  opts['options'] = generateNavbarOptions(req);
+  opts['options'] = await generateNavbarOptions(req, false);
   opts['title'] = "Logistics 3.0";
   opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
   opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
   opts['nonparsedAbiDefinition'] = nonparsedAbiDefinition;
   opts['byteCode'] = byteCode;
   opts['contractAddress'] = contract;
+  opts['MYIP'] = MYIP;
   await Fiat.fetch().then((toEth) => { opts['fiatUSDChange'] = toEth.USD(1);});
   await bot.dbStore.fetchrow(
     "SELECT contract_name, sender_address, handler_address, receiver_address," +
@@ -278,54 +458,81 @@ app.get('/', upload.array(), asyncMiddleware( async (req, res, next) => {
     opts['contractReceiver'] = res.receiver_address;
     opts['contractStatus'] = res.contract_status;
   }).catch((err) => {
-    Logger.error("Error retrieving contract info from the database!");
-    Logger.error(err);
-    console.error("Error retrieving contract info from the database!");
-    console.error(err);
+    printError("Error retrieving contract info from the database!", err);
   });
   res.render(path.join(__dirname,'public','templates','index.html'), opts);
 }));
 
-app.get('/new-contract', asyncMiddleware( async (req, res, next) => {
-  let user;
-  if(!(user = await maybeSetNonceAndRetrieveUser(req)) || !await maybeCreateAndRegisterNonce(req.session)) {
-    res.send('Access denied! Please access through Toshi');
-    return;
+app.get('/login', upload.array(), asyncMiddleware( async (req, res, next) => {
+  if(await checkPermissions(req, res, true, "any", "any")) {
+    res.redirect('/logout');
   }
   let opts = {};
-  opts['options'] = generateNavbarOptions(req);
+  opts['options'] = await generateNavbarOptions(req, false);
+  opts['title'] = "Logistics 3.0";
+  opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
+  opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
+  res.render(path.join(__dirname, 'public', 'templates', 'login.html'), opts);
+}));
+
+app.post('/login', upload.array(), asyncMiddleware( async (req, res, next) => {
+  if(await checkPermissions(req, res, true, "any", "any")) {
+    res.json({res: 'You are already logged in!', err: true});
+    return;
+  }
+  let result = {res: 'Everything turned out fine! Please check your email to finish registration process...', err: false};
+  await bot.dbStore.execute("INSERT INTO users (username, email) VALUES ($1, $2);", []).then((res) => {
+    printLog("User correctly registered into the database!");
+  }).catch((err) => {
+    printError("Error inserting user info into the database!", err);
+    result = {res: "Error inserting user info into the database!", err: true};
+  });
+  res.json(result);
+  return;
+}));
+
+app.post('/upload', upload.single(), asyncMiddleware( async (req, res, next) => {
+  if(!await checkPermissions(req, res, true, "any", "any")) return;
+  if(!req.file) return;
+  let nncInB = nonceInBody(req), nncInQ = nonceInQuery(req);
+  let result = {res: 'Everything turned out fine!', err: false};
+  const nonce = nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
+  const address = (await checkNonce(nonce)).address || '';
+  const userID = bot.dbStore.fetchrow("SELECT userID FROM addresses WHERE address = $1", [address]).then((res) => {
+    return res.userID;
+  }).catch((err) => {
+    printError("Error retrieving user info from the database!", err);
+    result = {res: "Error retrieving user info from the database!", err: true};
+  });
+  if(!result.err) {
+    await bot.dbStore.execute("UPDATE users SET avatar = $1 WHERE userID = $2;", [req.file.path, userID]).then((res) => {
+      printLog("User avatar successfuly updated!", "PATH: " + req.file.path);
+    }).catch((err) => {
+      printError("Error updating user avatar on the database!", "PATH: " + req.file.path, err);
+      result = {res: "Error updating user avatar on the database!", err: true};
+    });
+  }
+  res.json(result);
+  return;
+}));
+
+app.get('/new-contract', asyncMiddleware( async (req, res, next) => {
+  if(!await checkPermissions(req, res, true, "any", "any")) return;
+  let opts = {};
+  opts['options'] = await generateNavbarOptions(req);
   opts['title'] = "Logistics 3.0";
   opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
   opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
   opts['nonparsedAbiDefinition'] = nonparsedAbiDefinition;
   opts['byteCode'] = byteCode;
   opts['nonce'] = req.session.nonce;
+  opts['MYIP'] = MYIP;
   res.render(path.join(__dirname,'public','templates','new-contract.html'), opts);
 }));
 
 app.post('/new-contract', upload.array(), asyncMiddleware( async (req, res, next) => {
-  Logger.info("Request body:  " + String(Object.getOwnPropertyNames(req.body)));
-  Logger.info("Request nonce: " + String(req.body.nonce));
-  if(!hasPropertyName(req.body, 'nonce')){
-    res.json({res: 'Error, unexistent nonce', err: true});
-    return;
-  }
 
-  let user = await checkNonce(req.body.nonce);
-  if(!user || !hasPropertyName(user, 'address')){
-    res.json({res: 'Error, session expired. Please, go back to Toshi to update your session info', err: true});
-    return;
-  }
-
-  if(user.address !== req.body.sAddr){
-    Logger.error('Error, incorrect sender address. Are you the contract signer?');
-    Logger.error('Nonce User:     ' + user.address);
-    Logger.error('Given Address:  ' + req.body.sAddr);
-    res.json({res: 'Error, incorrect sender address. Are you the contract signer?', err: true});
-    return;
-  }
-
-  Logger.info("New contract correctly deployed!");
+  if(!await checkPermissions(req, res, true, "any", "any")) return;
 
   let result = {res: 'Error awaiting for database write event', err: true};
 
@@ -344,14 +551,9 @@ app.post('/new-contract', upload.array(), asyncMiddleware( async (req, res, next
       req.body.timestamp
     ]
   ).then((res) => {
-    Logger.info("Contract correctly registered in the database!");
-    Logger.info("DATA: " + JSON.stringify(req.body));
     result = {res: 'Everything turned out fine!', err: false};
   }).catch((err) => {
-    Logger.error("Error registering new contract in the database!");
-    Logger.error(err);
-    console.error("Error registering new contract in the database!");
-    console.error(err);
+    printError("Error registering new contract in the database!", err);
     result = {res: 'Error registering new contract in the database!', err: true}
   });
 
@@ -361,13 +563,9 @@ app.post('/new-contract', upload.array(), asyncMiddleware( async (req, res, next
 }));
 
 app.get('/withdrawal', upload.array(), asyncMiddleware( async (req, res, next) => {
-  let user;
-  if(!(user = await maybeSetNonceAndRetrieveUser(req)) || !await maybeCreateAndRegisterNonce(req.session)) {
-    res.send('Access denied! Please access through Toshi');
-    return;
-  }
+  if(!await checkPermissions(req, res, true, "sender", 1)) return;
   let opts = {};
-  opts['options'] = generateNavbarOptions(req);
+  opts['options'] = await generateNavbarOptions(req);
   opts['title'] = "Logistics 3.0";
   opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
   opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
@@ -375,43 +573,91 @@ app.get('/withdrawal', upload.array(), asyncMiddleware( async (req, res, next) =
   opts['byteCode'] = byteCode;
   opts['nonce'] = req.session.nonce;
   opts['contractAddress'] = req.query.cAddr || '';
+  opts['MYIP'] = MYIP;
   await Fiat.fetch().then((toEth) => { opts['fiatUSDChange'] = toEth.USD(1);});
   res.render(path.join(__dirname,'public','templates','withdrawal.html'), opts);
 }));
 
 app.get('/set-completed-contract', upload.array(), asyncMiddleware( async (req, res) => {
+  if(!await checkPermissions(req, res, true, "receiver", 0)) return;
   let opts = {};
-  opts['options'] = generateNavbarOptions(req);
+  opts['options'] = await generateNavbarOptions(req);
   opts['title'] = "Logistics 3.0";
   opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
   opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
   opts['nonparsedAbiDefinition'] = nonparsedAbiDefinition;
   opts['byteCode'] = byteCode;
-  opts['nonce'] = req.session.nonce;
+  opts['nonce'] = req.query.nonce;
   opts['contractAddress'] = req.query.cAddr || '';
+  opts['MYIP'] = MYIP;
   await Fiat.fetch().then((toEth) => { opts['fiatUSDChange'] = toEth.USD(1);});
   res.render(path.join(__dirname,'public','templates','set-completed-contract.html'), opts);
 }));
 
+app.post('/set-completed-contract', upload.array(), asyncMiddleware( async (req, res, next) => {
+
+  if(!await checkPermissions(req, res, true, "receiver", 0)) return;
+
+  let result = {res: 'Error awaiting for database write event', err: true};
+
+  await bot.dbStore.execute(
+    "UPDATE contracts SET contract_status = 1 WHERE contract_address = $1;",
+    [req.body.cAddr]
+  ).then((res) => {
+    result = {res: 'Everything turned out fine!', err: false};
+  }).catch((err) => {
+    printError("Error updating contract status in the database!", err);
+    result = {res: 'Error updating contract status in the database!', err: true}
+  });
+
+  res.json(result);
+}));
+
 app.get('/set-refused-contract', upload.array(), asyncMiddleware( async (req, res) => {
+  if(!await checkPermissions(req, res, true, "receiver", 0)) return;
   let opts = {};
-  opts['options'] = generateNavbarOptions(req);
+  let contract = req.query.cAddr || '';
+  opts['options'] = await generateNavbarOptions(req);
   opts['title'] = "Logistics 3.0";
   opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
   opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
   opts['nonparsedAbiDefinition'] = nonparsedAbiDefinition;
   opts['byteCode'] = byteCode;
-  opts['nonce'] = req.session.nonce;
-  opts['contractAddress'] = req.query.cAddr || '';
+  opts['nonce'] = req.query.nonce;
+  opts['contractAddress'] = contract;
+  opts['MYIP'] = MYIP;
+  await bot.dbStore.fetchrow(
+    "SELECT contract_name FROM contracts WHERE contract_address = $1;",
+    [contract]
+  ).then((res) => {
+    opts['contractName'] = res.contract_name;
+  }).catch((err) => {
+    printError("Error retrieving contract info from the database!", err);
+  });
   res.render(path.join(__dirname,'public','templates','set-refused-contract.html'), opts);
 }));
 
-app.listen(8888, function(){
-  console.log("Express Webapp working!!");
-});
+app.post('/set-refused-contract', upload.array(), asyncMiddleware( async (req, res, next) => {
+  if(!await checkPermissions(req, res, true, "receiver", 0)) return;
 
-//let code = fs.readFileSync('./dapp_src/logistics.sol').toString();
-//let web3 = new Web3( new Web3.providers.HttpProvider('http://ropsten.infura.io/'));
+  let result = {res: 'Error awaiting for database write event', err: true};
+
+  await bot.dbStore.execute(
+    "UPDATE contracts SET contract_status = 2 WHERE contract_address = $1;",
+    [req.body.cAddr]
+  ).then((res) => {
+    result = {res: 'Everything turned out fine!', err: false};
+  }).catch((err) => {
+    printError("Error updating contract status in the database!", err);
+    result = {res: 'Error updating contract status in the database!', err: true}
+  });
+
+  res.json(result);
+}));
+
+app.listen(8888, function(){
+  printLog("Express Webapp working!!");
+});
 
 let last_command = 'main';
 
@@ -464,7 +710,6 @@ const retrieveList = async (session, role, status, webview) => {
     res[res.length] = " " + (i+1) + ". " + opt.contract_name;
     return res;
   }
-  Logger.info("Retrieve list STATUS: " + status);
   let myAddress = web3.utils.toChecksumAddress(session.user.payment_address);
   let filterEdges = [
     {name: 'sender_address', value: (role === "sender" || role === "any") ? myAddress : ""},
@@ -473,7 +718,7 @@ const retrieveList = async (session, role, status, webview) => {
     {name: 'contract_status', value: (status === -1 || role === "any") ? "" : status}
   ];
   let filterEdgeReducer = (res, elem, i) => {
-    if(hasPropertyName(elem, "value") && elem.value.length > 0) {
+    if(hasPropertyName(elem, "value") && String(elem.value).length > 0) {
       res.subqueries[res.subqueries.length] = elem.name + " = $" + (res.subqueries.length + 1);
       res.arguments[res.arguments.length] = elem.value;
     }
@@ -493,27 +738,12 @@ const retrieveList = async (session, role, status, webview) => {
     if(res.length == 0) return {value:"Sorry, nothing to show yet...", iserror: true};
     let names = res.reduce(name_reducer, []).join("\n");
     let options = res.reduce(option_reducer, [{type: 'button',label: 'Done',value: 'done'}]);
-    Logger.info("Query result: " + JSON.stringify(res));
-    Logger.info("Names:        " + JSON.stringify(names));
-    Logger.info("Options:      " + JSON.stringify(options));
     return {value:[names, await preprocessOptions(session, options)], iserror: false};
   }).catch((err) => {
+    printError("An error occurred while querying the database...", err);
     return {value:"An error occurred while querying the database...\n" + err, iserror: true}
   });
 };
-
-/*const retrieveNonces = async (session) => {
-  let name_reducer = (res, opt, i) => {
-    res[res.length] = " " + (i+1) + ". " + opt.address;
-    return res;
-  }
-  return await bot.dbStore.fetch(
-    "SELECT address FROM nonces;",
-    []
-  ).then((res) => {return {value: res.reduce(name_reducer, []).join("\n"), iserror: false};}
-  ).catch((err) => {return {value:"An error occurred while querying the database...\n" + err, iserror: true};});
-};
-const listNonces = async (session) => {sendMessage(...[session].concat([].concat((await retrieveNonces(session)).value))); return true;};*/
 
 const listSent = async (session) => {sendMessage(...[session].concat([].concat((await retrieveList(session, 'sender', 0)).value)[0])); return true;};
 const listPending = async (session) => {sendMessage(...[session].concat([].concat((await retrieveList(session, 'receiver', 0)).value)[0])); return true;};
@@ -551,7 +781,6 @@ const listAndPrompt = (listOptions) => {
 const promptJSONTemplate = (template, ...substitutions) => {
   const parseSubstitution = (session, opt) => {return hasPropertyName(opt, 'sessVar') ? maybeRetrieveSessionVar(session, opt.sessVar, "") : opt;};
   return async (session) => {
-
     let done_option = [{type: 'button',label: 'Done',value: 'done'}];
 
     const templateReducer = (res, piece, i) => {return res + parseSubstitution(session, substitutions[i])};
@@ -570,9 +799,6 @@ const renderControlsAndPrompt = (body, processes) => {
         if(hasPropertyName(proc, "filter") ? !proc.filter(options[j]) : false) continue;
         switch(proc.type) {
         case "attribute":
-          Logger.info("Attribute process - Has sessVar? " + (hasPropertyName(proc.arguments, "sessVar") ? "YES" : "NO"));
-          Logger.info("Session Var: " + proc.arguments.sessVar);
-          Logger.info("Session Var Value: " + maybeRetrieveSessionVar(session, proc.arguments.sessVar, ""));
           let attrValue = hasPropertyName(proc.arguments, "sessVar") ? maybeRetrieveSessionVar(session, proc.arguments.sessVar, "") : (proc.arguments.value || true);
           let attrName = hasPropertyName(proc.arguments, "alias") ? proc.arguments.alias : (
             typeof(attrValue) === 'string' ? attrValue : "attr" + ++anonymousAttributeCounts[j]
@@ -588,30 +814,10 @@ const renderControlsAndPrompt = (body, processes) => {
 // Format checking functions
 const hasWebview = (obj) => {return hasPropertyName(obj, "action") ? /^Webview/.test(obj.action) : false;};
 
-//const listAndPromptSender = async (session, options) => {
-//  let res = await retrieveList(session, 'sender');
-//  if(res.iserror){
-//    sendMessage(session, `Sorry, you don't appear as sender for any pending shipment...`);
-//    prepareFallBackToMain(session, false);
-//    return false;
-//  }
-//  sendMessage(session, `Please, choose one of the following shipping contracts`,[]);
-//  sendMessage(...[session].concat([].concat(res.value)));
-//  return true;
-//};
-
 let menuOptions = {
   main: {
     msgHeader: `Hi there! Welcome to the Logistics Smart Contract Handler.`,
     options: [
-      /*{
-        control: {
-          type: 'button',
-          label: 'List Nonces',
-          description: 'Retrieve existing nonces',
-        },
-        f: listNonces
-      },*/
       {
         control: {
           type: 'button',
@@ -675,47 +881,6 @@ let menuOptions = {
       },
     ],
   },
-  /*new_shipment: {
-    msgHeader: `You're about to create a new shipping contract.`,
-    // TODO: Complete with prompted options
-    prompts: [
-      {
-        body: `Please provide a name to identify your new contract/shipment.`,
-        v: "shippingContractName",
-      },
-      {
-        body: `What's the shipping receiver's Toshi address?`,
-        v: "shippingContractReceiver",
-      },
-      {
-        body: `What's the transporter's Toshi address?`,
-        v: "shippingContractTransporter",
-      },
-      {
-        body: `What's the price to pay on arrival for the packet?`,
-        v: "shippingContractPrice",
-      },
-      //{
-      //  body: `Do you want to handle payment by contract on the arrival?`,
-      //  controls: [
-      //    {type: 'button', label: 'Yes', value: 'yes'},
-      //    {type: 'button', label: 'No', value: 'no'},
-      //  ],
-      //  v: "shippingContractPaymentOnArrival",
-      //},
-      //{
-      //  body: `What will the deadline be before launching a notification? (format: XX days)`,
-      //  controls: [
-      //    {type: 'button', label: 'Any', value: 'any'},
-      //    {type: 'button', label: '1 Day', value: '1 day'},
-      //    {type: 'button', label: '5 Days', value: '5 days'},
-      //    {type: 'button', label: '15 Days', value: '15 days'},
-      //  ],
-      //  v: "shippingContractDeadline",
-      //},
-    ],
-    parent: 'main',
-  },*/
   shipment_received: {
     msgHeader: `You're about to close a shipping contract.`,
     prompts: [
@@ -757,31 +922,9 @@ let menuOptions = {
     msgHeader: `You're about to withdraw pending ETH from a contract.`,
     prompts: [
       {
-        body: listAndPrompt({role:'sender', status: 0, webview: "http://" + MYIP + ":18889/withdrawal"}),
+        body: listAndPrompt({role:'sender', status: 1, webview: "http://" + MYIP + ":18889/withdrawal"}),
         v: "withdrawalContractName",
       },
-      /*{
-        body: `What do you want to do?`,
-        controls: [
-          {
-            type: 'button',
-            label: 'Withdraw',
-            //value: 'accept'
-            action: {type:"webview", value:"http://" + MYIP + ":18889/withdrawal"},
-          },
-          {
-            type: 'button',
-            label: 'Done',
-            value: 'done',
-          },
-        ],
-        v: "withdrawalReceivedAction",
-        f: (session, opt) => {
-          //TODO: Maybe apply changes to contract
-          Logger.info("Withdrawal function called with argument '" + opt + "'");
-          return true;
-        },
-      },*/
     ],
     parent: 'main',
   },
@@ -796,11 +939,11 @@ let menuOptions = {
   },
 };
 
-let default_controls = menuOptions.main.options.map(function(option){return {
+/*let default_controls = menuOptions.main.options.map(function(option){return {
   type: option.control.type,
   label: option.control.label,
   value: option.control.label.toLowerCase().split(' ').join('_'),
-}});
+}});*/
 
 bot.onEvent = async function(session, message) {
   let prev_submenu = maybeRetrieveSessionVar(session, 'submenu', 'main');
@@ -844,37 +987,9 @@ function checkPromptPhase(session) {
   return session.get('promptphase') || 0;
 }
 
-/*function retrieveUserMenuOptions(session) {
-
-  let reviver = (key, value) => {
-    if (typeof(value)==='string' && value.indexOf('function ') === 0)
-      return eval(`(${value})`);
-    return value
-  };
-
-  let replacer = (key, value) => {
-    if (typeof(value) === 'function')
-      return value.toString();
-    return value;
-  };
-
-  let result;
-  let menuopt = session.get('menuoptions');
-  if(!menuopt || (menuopt === 'undefined') || !(result = JSON.parse(menuopt, reviver))) {
-    session.set('menuoptions', JSON.stringify(menuOptions, replacer, 2));
-    session.flush();
-    result = menuOptions;
-  }
-
-  return result;
-
-}*/
-
 function nextPromptPhase(session, menuObj) {
   let promptPhase = checkPromptPhase(session);
-  Logger.info("Current Prompt Phase:" + promptPhase);
   promptPhase = (promptPhase + 1) % menuObj.prompts.length;
-  Logger.info("Next Prompt Phase:   " + promptPhase);
   setSessionVar(session, 'promptphase', promptPhase);
   return promptPhase != 0;
 }
@@ -911,7 +1026,7 @@ async function help(session) {
     let promptPhase = checkPromptPhase(session);
 
     if (promptPhase <= -1) {
-      Logger.info("ATTENTION! PromptPhase Reseted!!");
+      printWarning("ATTENTION! PromptPhase Reseted!!");
       setSessionVar(session, 'promptphase', 0);
       promptPhase = 0;
     }
@@ -925,7 +1040,6 @@ async function help(session) {
         controls
       );
     } else {
-      Logger.info("About to execute \"" + menuPrompt.body.name + "\"");
       menuPrompt.body(session, controls);
     }
 
@@ -950,10 +1064,6 @@ async function handlePrompt(session, opt){
 
   if (hasVar)
     setSessionVar(session, menuPrompt.v, opt);
-
-  Logger.info("Prompt Function Name: " + promptFunc.name);
-  Logger.info("Arguments:            " + opt);
-  Logger.info("Result:               " + String(hasVar ? await promptFunc(session, opt) : await promptFunc(session)));
 
   if (hasVar ? await promptFunc(session, opt) : await promptFunc(session)) {
     if (!nextPromptPhase(session, menuObj))
@@ -1043,8 +1153,8 @@ function donate(session) {
 
 // HELPERS
 
-function sendMessage(session, message, controls_) {
-  controls_ = typeof controls_ !== 'undefined' ? controls_ : default_controls;
+async function sendMessage(session, message, controls_) {
+  controls_ = typeof controls_ !== 'undefined' ? controls_ : await preprocessOptions(session, menuOptions.main.options);
   session.reply(SOFA.Message({
     body: message,
     controls: controls_,

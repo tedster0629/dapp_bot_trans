@@ -34,9 +34,7 @@
           .attr('aria-valuenow', status);
       }
 
-      function requestWithdrawal(evt) {
-
-        evt.preventDefault();
+      function requestWithdrawal() {
 
         jQuery('.container-wrapper').append(
           jQuery('<div class="alert alert-warning stay mx-2" role="alert" />')
@@ -64,7 +62,8 @@
         );
       }
 
-      jQuery('button[type=submit]').on('click',() => {
+      jQuery('button[type=submit]').on('click',(evt) => {
+        evt.preventDefault();
         requestWithdrawal();
         jQuery('.container-wrapper').append(
           jQuery('<div class="alert alert-info processing row mx-2" role="alert" />')

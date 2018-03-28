@@ -12,7 +12,7 @@
         {% for opt in content %}
 		  {% if not opt.options %}
           <li class="nav-item{{ " active" if opt.isCurrent }}">
-            <a class="nav-link{{ " disabled" if opt.isDisabled }}" href="{{ opt.href }}">{{ opt.name | safe }}{{ (opt.currentMarker | safe) if opt.isCurrent }}</a>
+            <a class="nav-link{{ " disabled inactiveLink" if opt.isDisabled }}" href="{{ opt.href }}">{{ opt.name | safe }}{{ (opt.currentMarker | safe) if opt.isCurrent }}</a>
           </li>
 		  {% else %}
           <li class="nav-item dropdown">
@@ -22,7 +22,7 @@
             <div class="dropdown-menu" aria-labelledby="navbarDropdown">
 			{% for o in opt.options %}
 			  {% if not o.separator %}
-			  <a class="dropdown-item{{ " active" if o.isCurrent }}" href="{{ o.href }}">{{ o.name | safe }}</a>
+			  <a class="dropdown-item{{ " disabled inactiveLink" if o.isDisabled }}{{ " active" if o.isCurrent }}" href="{{ o.href }}">{{ o.name | safe }}</a>
 			  {% else %}
 			  {{ o.separator | safe }}
 			  {% endif %}
