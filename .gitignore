@@ -7,4 +7,6 @@ docker-compose.yml
 .idea
 config/internal.yml
 pgdata/*
-redisdata/
+!pgdata/.gitmeplz
+redisdata/*
+!redisdata/.gitmeplz
