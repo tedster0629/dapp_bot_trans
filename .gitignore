@@ -6,3 +6,5 @@ docker-compose.yml
 .gradle
 .idea
 config/internal.yml
+pgdata/*
+redisdata/
