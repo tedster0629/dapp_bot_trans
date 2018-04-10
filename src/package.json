@@ -13,7 +13,9 @@
   "license": "ISC",
   "dependencies": {
     "bootstrap": "^4.0.0",
-    "serve-favicon": "^2.4.5"
+    "serve-favicon": "^2.4.5",
+    "nodemailer":"~2.7.2",
+    "email-templates":"latest"
   },
   "devDependencies": {
     "gulp": "^3.9.1",
