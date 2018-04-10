@@ -1,0 +1,116 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <!--[if !mso]><!-->
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <!--<![endif]-->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title></title>
+    <link rel="stylesheet" type="text/css" href="styles.css" />
+    <!--[if (gte mso 9)|(IE)]>
+    <style type="text/css">
+        table {border-collapse: collapse;}
+    </style>
+    <![endif]-->
+    <style type="text/css">
+        body {
+            margin: 0 !important;
+            padding: 0;
+            background-color: #ffffff;
+        }
+        table {
+            border-spacing: 0;
+            font-family: sans-serif;
+            color: #333333;
+        }
+        td {
+            padding: 0;
+        }
+        img {
+            border: 0;
+        }
+        div[style*="margin: 16px 0"] {
+            margin:0 !important;
+        }
+        .wrapper {
+            width: 100%;
+            table-layout: fixed;
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }
+        .webkit {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .outer {
+            Margin: 0 auto;
+            width: 100%;
+            max-width: 600px;
+        }
+        .inner {
+            padding: 10px;
+        }
+        p {
+            Margin: 0;
+        }
+        a {
+            color: #ee6a56;
+            text-decoration: underline;
+        }
+        .h1 {
+            font-size: 21px;
+            font-weight: bold;
+            Margin-bottom: 18px;
+        }
+        .h2 {
+            font-size: 18px;
+            font-weight: bold;
+            Margin-bottom: 12px;
+        }
+
+        /* One column layout */
+        .one-column .contents {
+            text-align: left;
+        }
+        .one-column p {
+            font-size: 14px;
+            Margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+<center class="wrapper">
+    <div class="webkit">
+        <!--[if (gte mso 9)|(IE)]>
+        <table width="600" align="center">
+            <tr>
+                <td>
+        <![endif]-->
+        <table class="outer" align="center">
+            <tr>
+                <td class="one-column">
+                    <table width="100%">
+                        <tr>
+                            <td class="inner contents">
+                                <p class="h1">Password Reset</p>
+                                <p>We've just received a password reset request for this account.</p>
+                                <p>Please, <a href="<%= resetUrl %>">click here</a> to continue.</p>
+                                <br/>
+                                <br/>
+                                <p><a href="<%= reportUrl %>">I didn't request a password reset</a></p>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+        <!--[if (gte mso 9)|(IE)]>
+        </td>
+        </tr>
+        </table>
+        <![endif]-->
+    </div>
+</center>
+</body>
+</html>

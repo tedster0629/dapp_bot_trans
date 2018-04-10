@@ -8,11 +8,13 @@ const SOFA = require('sofa-js');
 const Fiat = require('./lib/Fiat');
 const Logger = require('./lib/Logger');
 //const Session = require('./lib/Session');
+const Mailer = require('./lib/Mailer');
 const solc = require('solc');
 
 const nunjucks = require('nunjucks');
 const express = require('express');
 const session = require('express-session');
+
 const redis = require('redis');
 const RedisStore = require('connect-redis')(session);
 const favicon = require('serve-favicon');
@@ -69,6 +71,15 @@ const printLog = (...messages) => {
 }
 
 const DEFAULT_FUNC = () => {return true;};
+const COMMON_OPTS = {
+  title: "Logistics 3.0",
+  subtitle: "Logistics Smart-Contract Management for unlimited blockchained fun.",
+  currentMarker: "<span class=\"sr-only\">(current)</span>"
+};
+const CONTRACT_OPTS = {
+  nonparsedAbiDefinition: nonparsedAbiDefinition,
+  byteCode: byteCode
+};
 
 const code = fs.readFileSync(path.join(__dirname, '..', 'dapp_src', 'new_logistics.sol')).toString();
 const compiledCode = solc.compile(code);
@@ -88,7 +99,10 @@ let bot = new Bot(() => {
 let botAddress = bot.client.toshiIdAddress;
 
 const DATABASE_TABLES = `
+DROP TABLE IF EXISTS contracts;
 DROP TABLE IF EXISTS nonces;
+DROP TABLE IF EXISTS addresses;
+DROP TABLE IF EXISTS users;
 CREATE TABLE IF NOT EXISTS contracts (
     contract_address VARCHAR(42) PRIMARY KEY,
     contract_name VARCHAR(32),
@@ -99,19 +113,23 @@ CREATE TABLE IF NOT EXISTS contracts (
     deployment_dt TIMESTAMP NOT NULL
 );
 CREATE TABLE IF NOT EXISTS nonces (
-    address VARCHAR(42) PRIMARY KEY,
+    nonce_id SERIAL PRIMARY KEY,
+    address VARCHAR(42),
     toshi_id VARCHAR(42),
-    nonce VARCHAR(64),
+    email VARCHAR(128),
+    nonce VARCHAR(64) NOT NULL,
     validity TIMESTAMP NOT NULL
 );
 CREATE TABLE IF NOT EXISTS addresses (
    address VARCHAR(42) PRIMARY KEY,
-   userID INTEGER NOT NULL
+   user_id INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS users (
-    userID SERIAL PRIMARY KEY,
+    user_id SERIAL PRIMARY KEY,
     username VARCHAR(64) NOT NULL,
-    email VARCHAR(128) NOT NULL,
+    email VARCHAR(128) UNIQUE NOT NULL,
+    pass_digest VARCHAR(66) NOT NULL,
+    verified BOOLEAN NOT NULL, 
     avatar VARCHAR(64) NOT NULL DEFAULT ''
 );
 `;
@@ -129,13 +147,16 @@ const expressOptions = {
 };
 
 const submenus = [
-  {name: "Home", href: "/", permittedRoles: ["any"], permittedStatuses: ["any"]},
-  {name: "Create New Contract", href: "/new-contract", permittedRoles: ["any"], permittedStatuses: ["any"]},
+  {name: "Home", href: "/", permittedRoles: ["any"], permittedStatuses: ["any"], permittedLoginStatuses: ["non-logged"]},
+  {name: "Create New Contract", href: "/new-contract", permittedRoles: ["any"], permittedStatuses: ["any"], permittedLoginStatuses: ["logged"]},
   {name: "This Contract", options: [
-    {name: "Set as Completed", href: "/set-completed-contract", permittedRoles: ["receiver"], permittedStatuses: [0]},
-    {name: "Set as Refused", href: "/set-refused-contract", permittedRoles: ["receiver"], permittedStatuses: [0]},
-    {name: "Withdraw", href: "/withdrawal", permittedRoles: ["sender"], permittedStatuses: [1]},
+    {name: "Set as Completed", href: "/set-completed-contract", permittedRoles: ["receiver"], permittedStatuses: [0], permittedLoginStatuses: ["logged"]},
+    {name: "Set as Refused", href: "/set-refused-contract", permittedRoles: ["receiver"], permittedStatuses: [0], permittedLoginStatuses: ["logged"]},
+    {name: "Withdraw", href: "/withdrawal", permittedRoles: ["sender"], permittedStatuses: [1], permittedLoginStatuses: ["logged"]},
   ]},
+  {name: "Login", href: "/login", permittedRoles: ["any"], permittedStatuses: ["any"], permittedLoginStatuses: ["non-logged"], floatRight: true},
+  {name: "Logout", href: "/logout", permittedRoles: ["any"], permittedStatuses: ["any"], permittedLoginStatuses: ["logged"], floatRight: true},
+  {name: "Register", href: "/register", permittedRoles: ["any"], permittedStatuses: ["any"], permittedLoginStatuses: ["non-logged"], floatRight: true}
 ];
 
 function Get(yourUrl){
@@ -149,18 +170,28 @@ function hasPropertyName(obj, name) {
     return typeof(obj) !== 'undefined' ? Object.getOwnPropertyNames(obj).indexOf(name) > -1 : false;
 }
 
+/**async generateNavbarOptions(req, isContractSpecific)
+ *
+ *
+ *
+ * @param req
+ * @param isContractSpecific
+ * @returns {Promise.<*>}
+ */
+
 const generateNavbarOptions = async (req, isContractSpecific) => {
 
   isContractSpecific = typeof(isContractSpecific) !== 'undefined' ? Boolean(isContractSpecific) : true;
 
-  let nncInB = nonceInBody(req), nncInQ = nonceInQuery(req);
+  //let nncInB = nonceInBody(req), nncInQ = nonceInQuery(req);
   let contract = req.query.cAddr || '';
   let contractStatus = (isContractSpecific && contract.length > 0) ? await retrieveContractStatus(contract) : '';
-  let nonce = nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
-  let user = (await checkNonce(nonce)).address || await maybeSetNonceAndRetrieveUser(req);
+  //let nonce = nonceInSession(req) ? req.session.nonce : (nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : ''));
+  let user = await maybeSetNonceAndRetrieveUser(req);
+  let userAuthenticated = Boolean(req.session && req.session.authenticated);
   let userRoles = (isContractSpecific && contract.length > 0) ? await retrieveUserRoles(user, contract) : ["any"];
 
-  let urlAttributes = [{name: "nonce", value: nonce}];
+  let urlAttributes = [];//[{name: "nonce", value: nonce}];
   urlAttributes = contract.length > 0 ? urlAttributes.concat({name: "cAddr", value: contract}) : urlAttributes;
 
   const currentReducer = (res, opt, i) => {
@@ -179,7 +210,7 @@ const generateNavbarOptions = async (req, isContractSpecific) => {
     let isParentMenu = hasPropertyName(opt,'options');
     let userHasRole = isParentMenu || opt.permittedRoles.indexOf("any") >= 0 || userRoles.reduce(userRoleReducer(opt.permittedRoles), false);
     let contractHasStatus = isParentMenu || opt.permittedStatuses.indexOf("any") >= 0 || opt.permittedStatuses.indexOf(contractStatus) >= 0;
-    if(userHasRole) {
+    if(userHasRole && ((userAuthenticated == opt.permittedLoginStatuses) || !hasPropertyName(opt, "permittedLoginStatuses"))) {
       let option = {name: opt.name};
       if(isParentMenu) {
         let options = opt.options.reduce(menuReducer, []);
@@ -187,10 +218,12 @@ const generateNavbarOptions = async (req, isContractSpecific) => {
         option['options'] = options;
         option['isCurrent'] = option.options.reduce(currentReducer, false);
         option['isDisabled'] = !option.options.reduce(enabledReducer, false);
+        option['floatRight'] = opt.floatRight || false;
       } else {
         option['href'] = urlAttributes.reduce(urlAttributeReducer, opt.href);
         option['isCurrent'] = req.route.path === opt.href;
         option['isDisabled'] = !contractHasStatus;
+        option['floatRight'] = opt.floatRight || false;
       }
       res = res.concat(option);
     }
@@ -210,6 +243,7 @@ function createRandomString(length, possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef
 async function maybeCreateAndRegisterNonce(session) {
   let nonce = createRandomString(64);
   let success = false;
+  if(!session.authenticated) return false;
   let result = await bot.dbStore.fetchval(
     "SELECT nonce FROM nonces WHERE address = $1 AND validity >= $2 :: timestamp",
     [
@@ -229,6 +263,8 @@ async function maybeCreateAndRegisterNonce(session) {
         generateDatetimeString(8)
       ]
     ).then(()=>{
+      session.nonce = nonce;
+      session.save(printError);
       return nonce;
     }).catch((err)=>{
       printError("Error while creating new nonce...", err);
@@ -259,24 +295,55 @@ const checkNonce = async (nonce) => {
 };
 
 const maybeSetNonceAndRetrieveUser = async (req) => {
-  let inQuery = hasPropertyName(req.query, 'nonce');
-  let inSession = hasPropertyName(req.session, 'nonce');
+  let inQuery = nonceInQuery(req);
+  let inBody = nonceInBody(req);
+  let inSession = nonceInSession(req);
   let res = false;
+
   if(inQuery) {
     res = await checkNonce(req.query.nonce);
+  } else if(inBody) {
+    res = await checkNonce(req.body.nonce);
   } else if(inSession) {
     res = await checkNonce(req.session.nonce);
   }
-  if(res){
-    req.session.nonce = inQuery ? req.query.nonce : req.session.nonce;
-    req.session.toshi_id = res.toshi_id;
-    req.session.payment_address = res.address;
-    req.session.save(Logger.error)
-  }
+
+  if(!res) return false;
+
+  req.session.nonce = inQuery ? req.query.nonce : (inBody ? req.body.nonce : req.session.nonce);
+  req.session.toshi_id = res.toshi_id;
+  req.session.payment_address = res.address;
+  req.session.save(printError);
+
   return res.address;
 };
 
 const MYIP = JSON.parse(Get("https://jsonip.com")).ip;
+
+const asyncMiddleware = fn => {
+    return (req, res, next) => {
+        Promise.resolve(fn(req, res, next))
+            .catch(next);
+    };
+};
+
+const permissionHandler = async (req, res, next) => {
+  printLog("permissionHandler " + req.url);
+  const endpointFilter = (endpoint) => {
+    return endpoint.path === req.route.path && hasPropertyName(req.route.methods, endpoint.method) && req.route.methods[endpoint.method];
+  };
+  const filteredEndpoints = appEndpoints.filter(endpointFilter);
+  let violatedPermission = "";
+  if(filteredEndpoints.length >= 0){
+    violatedPermission = await checkPermissions(req, res, ...filteredEndpoints[0].permissions);
+    if(!violatedPermission) next();
+    filteredEndpoints[0].unauthorisedQueryHandler(req, res, violatedPermission);
+    return;
+  }
+  res.render("/not-found", {status: 404});
+  return;
+};
+
 const storage = multer.diskStorage({
   destination: "/uploads",
   filename: (req, file, callback) => {
@@ -302,6 +369,8 @@ app.use(session({ store: new RedisStore({
 }), secret: 'SEKR37$$', resave: false, saveUninitialized: true }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended: true}));
+app.use(app.router);
+app.use(asyncMiddleware(permissionHandler));
 
 let env = nunjucks.configure(path.join(__dirname,'public','templates'), {
   autoescape: true,
@@ -316,13 +385,6 @@ env.addFilter('washere', function(obj) {
     printLog(obj.toString());
     return obj;
 });
-
-const asyncMiddleware = fn => {
-  return (req, res, next) => {
-    Promise.resolve(fn(req, res, next))
-      .catch(next);
-  };
-};
 
 const retrieveUserRoles = async (user, contract) => {
   return await bot.dbStore.fetchrow(
@@ -366,47 +428,65 @@ const nonceInQuery = (req) => {
   return hasPropertyName(req, 'query') ? (hasPropertyName(req.query, 'nonce') && req.query.nonce.length > 0 && typeof(req.query.nonce) !== 'undefined') : false;
 };
 
-const checkPermissions = async (req, res, checkNonceIO, permittedRoles, compatibleContractStatus) => {
+const nonceInSession = (req) => {
+  return hasPropertyName(req, 'session') ? (hasPropertyName(req.session, 'nonce') && req.session.nonce.length > 0 && typeof(req.session.nonce) !== 'undefined') : false;
+};
 
+PERMISSION_PROFILE__ANY_USER = [];
+PERMISSION_PROFILE__ONLY_NON_AUTHENTICATED = ["user_non_authenticated"];
+PERMISSION_PROFILE__ONLY_AUTHENTICATED = ["user_authenticated"];
+PERMISSION_PROFILE__RESTRICTED_API = ["nonce_validity", "user_has_permission", "contract_status_compatible"];
+PERMISSION_PROFILE__RESTRICTED_GUI = ["user_authenticated", "user_has_permission", "contract_status_compatible"];
+
+const checkPermissions = async (req, res, mandatoryConditions, permittedRoles, compatibleContractStatus) => {
+
+  mandatoryConditions = typeof(mandatoryConditions) !== 'undefined' ? mandatoryConditions : ["all"];
+  mandatoryConditions = Array.isArray(mandatoryConditions) ? mandatoryConditions : [].concat(mandatoryConditions);
+
+  permittedRoles = typeof(permittedRoles) !== 'undefined' ? permittedRoles : ["any"];
   permittedRoles = Array.isArray(permittedRoles) ? permittedRoles : [].concat(permittedRoles);
+
+  compatibleContractStatus = typeof(compatibleContractStatus) !== 'undefined' ? compatibleContractStatus : ["any"];
   compatibleContractStatus = Array.isArray(compatibleContractStatus) ? compatibleContractStatus : [].concat(compatibleContractStatus);
 
-  let nonce, user, contract, userRoles, contractStatus;
-  let nncInB = nonceInBody(req), nncInQ = nonceInQuery(req);
-
   let conditions = [
-    {
+    /*{
       name: "has_nonce",
       f: async () => {
-        if(!checkNonceIO) return true;
-        return nncInB || nncInQ;
+        return nonceInSession(req) || nonceInBody(req) || nonceInQuery(req);
       }
-    },
+    },*/
     {
       name: "nonce_validity",
       f: async () => {
-        if(!checkNonceIO) return true;
-        nonce = nonce || nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
-        user = user || (await checkNonce(nonce)).address;
-        return Boolean(user);
+        return Boolean(await maybeSetNonceAndRetrieveUser(req));
       }
     },
     {
       name: "user_registered",
       f: async () => {
-        nonce = nonce || nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
-        user = user || (await checkNonce(nonce)).address || await maybeSetNonceAndRetrieveUser(req);
-        return Boolean(user || await maybeCreateAndRegisterNonce(req.session));
+        return Boolean(req.session && await maybeCreateAndRegisterNonce(req.session));
+      }
+    },
+    {
+      name: "user_authenticated",
+      f: async () => {
+        return Boolean(req.session && req.session.authenticated);
+      }
+    },
+    {
+      name: "user_non_authenticated",
+      f: async () => {
+        return !Boolean(req.session && req.session.authenticated);
       }
     },
     {
       name: "user_has_permission",
       f: async () => {
         if(permittedRoles.indexOf("any") >= 0) return true;
-        contract = contract || req.query.cAddr || '';
-        nonce = nonce || nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
-        user = user || (await checkNonce(nonce)).address || await maybeSetNonceAndRetrieveUser(req);
-        userRoles = userRoles || await retrieveUserRoles(user, contract);
+        let contract = req.query.cAddr || '';
+        let user =  await maybeSetNonceAndRetrieveUser(req);
+        let userRoles = await retrieveUserRoles(user, contract);
         return userRoles.reduce(userRoleReducer(permittedRoles), false);
       }
     },
@@ -414,246 +494,452 @@ const checkPermissions = async (req, res, checkNonceIO, permittedRoles, compatib
       name: "contract_status_compatible",
       f: async () => {
         if(compatibleContractStatus.indexOf("any") >= 0) return true;
-        contract = contract || req.query.cAddr || '';
-        contractStatus = contractStatus || await retrieveContractStatus(contract);
+        let contract = req.query.cAddr || '';
+        let contractStatus = await retrieveContractStatus(contract);
         return compatibleContractStatus.indexOf(contractStatus) >= 0;
       }
     }
   ];
 
+  let conditionFilter = async (cond) => {
+    return await (mandatoryConditions.indexOf("all") >= 0 || mandatoryConditions.indexOf(cond) >= 0);
+  };
+
   let conditionReducer = async (res, cond, i) =>  {
     return await res === "" ? (await cond.f() ? "" : cond.name) : res;
   };
 
-  let result = await conditions.reduce(conditionReducer, "");
-  if(result) {
-    res.json({res:'Access denied! Unmet criterium: ' + result, err: true});
-    return false;
-  }
+  return await conditions.filter(conditionFilter).reduce(conditionReducer, "");
 
-  return true;
+  //let result = await conditions.filter(conditionFilter).reduce(conditionReducer, "");
+  //if(result) {
+  //  res.json({res:'Access denied! Unmet criterium: ' + result, err: true});
+  //  return false;
+  //}
+  //
+  //return true;
 };
 
-app.get('/', upload.array(), asyncMiddleware( async (req, res, next) => {
-  if(!await checkPermissions(req, res, false, "any", "any")) return;
-  let opts = {};
-  let contract = req.query.cAddr || '';
-  opts['options'] = await generateNavbarOptions(req, false);
-  opts['title'] = "Logistics 3.0";
-  opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
-  opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
-  opts['nonparsedAbiDefinition'] = nonparsedAbiDefinition;
-  opts['byteCode'] = byteCode;
-  opts['contractAddress'] = contract;
-  opts['MYIP'] = MYIP;
-  await Fiat.fetch().then((toEth) => { opts['fiatUSDChange'] = toEth.USD(1);});
-  await bot.dbStore.fetchrow(
-    "SELECT contract_name, sender_address, handler_address, receiver_address," +
-    " contract_status FROM contracts WHERE contract_address = $1;",
-    [contract]
-  ).then((res) => {
-    opts['contractName'] = res.contract_name;
-    opts['contractSender'] = res.sender_address;
-    opts['contractHandler'] = res.handler_address;
-    opts['contractReceiver'] = res.receiver_address;
-    opts['contractStatus'] = res.contract_status;
-  }).catch((err) => {
-    printError("Error retrieving contract info from the database!", err);
-  });
-  res.render(path.join(__dirname,'public','templates','index.html'), opts);
-}));
-
-app.get('/login', upload.array(), asyncMiddleware( async (req, res, next) => {
-  if(await checkPermissions(req, res, true, "any", "any")) {
-    res.redirect('/logout');
-  }
-  let opts = {};
-  opts['options'] = await generateNavbarOptions(req, false);
-  opts['title'] = "Logistics 3.0";
-  opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
-  opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
-  res.render(path.join(__dirname, 'public', 'templates', 'login.html'), opts);
-}));
-
-app.post('/login', upload.array(), asyncMiddleware( async (req, res, next) => {
-  if(await checkPermissions(req, res, true, "any", "any")) {
-    res.json({res: 'You are already logged in!', err: true});
-    return;
-  }
-  let result = {res: 'Everything turned out fine! Please check your email to finish registration process...', err: false};
-  await bot.dbStore.execute("INSERT INTO users (username, email) VALUES ($1, $2);", []).then((res) => {
-    printLog("User correctly registered into the database!");
-  }).catch((err) => {
-    printError("Error inserting user info into the database!", err);
-    result = {res: "Error inserting user info into the database!", err: true};
-  });
-  res.json(result);
-  return;
-}));
-
-app.post('/upload', upload.single(), asyncMiddleware( async (req, res, next) => {
-  if(!await checkPermissions(req, res, true, "any", "any")) return;
-  if(!req.file) return;
-  let nncInB = nonceInBody(req), nncInQ = nonceInQuery(req);
-  let result = {res: 'Everything turned out fine!', err: false};
-  const nonce = nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
-  const address = (await checkNonce(nonce)).address || '';
-  const userID = bot.dbStore.fetchrow("SELECT userID FROM addresses WHERE address = $1", [address]).then((res) => {
-    return res.userID;
-  }).catch((err) => {
-    printError("Error retrieving user info from the database!", err);
-    result = {res: "Error retrieving user info from the database!", err: true};
-  });
-  if(!result.err) {
-    await bot.dbStore.execute("UPDATE users SET avatar = $1 WHERE userID = $2;", [req.file.path, userID]).then((res) => {
-      printLog("User avatar successfuly updated!", "PATH: " + req.file.path);
-    }).catch((err) => {
-      printError("Error updating user avatar on the database!", "PATH: " + req.file.path, err);
-      result = {res: "Error updating user avatar on the database!", err: true};
-    });
-  }
-  res.json(result);
-  return;
-}));
-
-app.get('/new-contract', asyncMiddleware( async (req, res, next) => {
-  if(!await checkPermissions(req, res, true, "any", "any")) return;
-  let opts = {};
-  opts['options'] = await generateNavbarOptions(req);
-  opts['title'] = "Logistics 3.0";
-  opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
-  opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
-  opts['nonparsedAbiDefinition'] = nonparsedAbiDefinition;
-  opts['byteCode'] = byteCode;
-  opts['nonce'] = req.session.nonce;
-  opts['MYIP'] = MYIP;
-  res.render(path.join(__dirname,'public','templates','new-contract.html'), opts);
-}));
-
-app.post('/new-contract', upload.array(), asyncMiddleware( async (req, res, next) => {
-
-  if(!await checkPermissions(req, res, true, "any", "any")) return;
-
-  let result = {res: 'Error awaiting for database write event', err: true};
-
-  await bot.dbStore.execute(
-    "INSERT INTO contracts" +
-    "  (contract_address, contract_name, sender_address, handler_address," +
-    "    receiver_address, contract_status, deployment_dt)" +
-    "  VALUES ($1,$2,$3,$4,$5,$6,$7)",
-    [
-      req.body.cAddr,
-      req.body.n,
-      req.body.sAddr,
-      req.body.hAddr,
-      req.body.rAddr,
-      req.body.s,
-      req.body.timestamp
+const appEndpoints = [
+  {
+    path: "/",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__ANY_USER, "any", "any"],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
+        let opts = COMMON_OPTS.concat(CONTRACT_OPTS);
+        let contract = req.query.cAddr || '';
+        opts['options'] = await generateNavbarOptions(req, false);
+        opts['contractAddress'] = contract;
+        opts['MYIP'] = MYIP;
+        await Fiat.fetch().then((toEth) => { opts['fiatUSDChange'] = toEth.USD(1);});
+        await bot.dbStore.fetchrow(
+          "SELECT contract_name, sender_address, handler_address, receiver_address," +
+          " contract_status FROM contracts WHERE contract_address = $1;",
+          [contract]
+        ).then((res) => {
+          opts['contractName'] = res.contract_name;
+          opts['contractSender'] = res.sender_address;
+          opts['contractHandler'] = res.handler_address;
+          opts['contractReceiver'] = res.receiver_address;
+          opts['contractStatus'] = res.contract_status;
+        }).catch((err) => {
+          printError("Error retrieving contract info from the database!", err);
+        });
+        res.render(path.join(__dirname,'public','templates','index.html'), opts);
+      })
     ]
-  ).then((res) => {
-    result = {res: 'Everything turned out fine!', err: false};
-  }).catch((err) => {
-    printError("Error registering new contract in the database!", err);
-    result = {res: 'Error registering new contract in the database!', err: true}
-  });
+  },
+  {
+    path: "/login",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__ONLY_NON_AUTHENTICATED],
+    unauthorisedQueryHandler: (req, res) => {
+      res.redirect('/logout');
+      return;
+    },
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
+        let opts = COMMON_OPTS;
+        opts['options'] = await generateNavbarOptions(req, false);
+        res.render(path.join(__dirname, 'public', 'templates', 'login.html'), opts);
+      })
+    ]
+  },
+  {
+    path: "/register",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__ONLY_NON_AUTHENTICATED],
+    unauthorisedQueryHandler: asyncMiddleware( async (req, res) => {
+      let opts = COMMON_OPTS;
+      opts['options'] = await generateNavbarOptions(req, false);
+      opts['result'] = {res: 'You are already logged in!', err: true};
+      res.render(path.join(__dirname, 'public', 'templates', 'register.html'), opts);
+    }),
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
+        let opts = COMMON_OPTS;
+        opts['options'] = await generateNavbarOptions(req, false);
+        res.render(path.join(__dirname, 'public', 'templates', 'register.html'), opts);
+      })
+    ]
+  },
+  {
+    path: "/register",
+    method: "post",
+    permissions: [PERMISSION_PROFILE__ANY_USER],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
+        let result = {res: 'Everything turned out fine! Please check your email to finish registration process...', err: false};
 
-  res.json(result);
-  return;
+        await bot.dbStore.execute(
+          "INSERT INTO users (username, email, pass_digest, verified) VALUES ($1, $2, $3, FALSE);",
+          [req.body.username, req.body.mail, req.body.pass_digest]
+        ).then(() => {
+          printLog("User correctly registered into the database!");
+        }).catch((err) => {
+          printError("Error inserting user info into the database!", err);
+          result = {res: "Error inserting user info into the database!", err: true};
+        });
 
-}));
+        let nonce = createRandomString(64);
 
-app.get('/withdrawal', upload.array(), asyncMiddleware( async (req, res, next) => {
-  if(!await checkPermissions(req, res, true, "sender", 1)) return;
-  let opts = {};
-  opts['options'] = await generateNavbarOptions(req);
-  opts['title'] = "Logistics 3.0";
-  opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
-  opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
-  opts['nonparsedAbiDefinition'] = nonparsedAbiDefinition;
-  opts['byteCode'] = byteCode;
-  opts['nonce'] = req.session.nonce;
-  opts['contractAddress'] = req.query.cAddr || '';
-  opts['MYIP'] = MYIP;
-  await Fiat.fetch().then((toEth) => { opts['fiatUSDChange'] = toEth.USD(1);});
-  res.render(path.join(__dirname,'public','templates','withdrawal.html'), opts);
-}));
+        await bot.dbStore.execute(
+          "INSERT INTO nonces (nonce, email, validity)" +
+          "  VALUES ($1,$2,$3) " +
+          "  ON CONFLICT (address) DO UPDATE" +
+          "    SET nonce = $1, email = $2, validity = $3;",
+          [nonce, req.body.mail, generateDatetimeString(24)]
+        ).then(()=>{
+          result = {res: "Success!", err: false};
+        }).catch((err)=>{
+          result = {res: "Error: " + err, err: true};
+        });
 
-app.get('/set-completed-contract', upload.array(), asyncMiddleware( async (req, res) => {
-  if(!await checkPermissions(req, res, true, "receiver", 0)) return;
-  let opts = {};
-  opts['options'] = await generateNavbarOptions(req);
-  opts['title'] = "Logistics 3.0";
-  opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
-  opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
-  opts['nonparsedAbiDefinition'] = nonparsedAbiDefinition;
-  opts['byteCode'] = byteCode;
-  opts['nonce'] = req.query.nonce;
-  opts['contractAddress'] = req.query.cAddr || '';
-  opts['MYIP'] = MYIP;
-  await Fiat.fetch().then((toEth) => { opts['fiatUSDChange'] = toEth.USD(1);});
-  res.render(path.join(__dirname,'public','templates','set-completed-contract.html'), opts);
-}));
+        Mailer.sendEmailVerify(
+          req.body.mail,
+          req.protocol + '://' + req.get('Host') + '/verify?nonce=' + nonce + '&mail=' + encodeURIComponent(req.body.mail),
+          req.protocol + '://' + req.get('Host') + '/report-verify?nonce=' + nonce + '&mail=' + encodeURIComponent(req.body.mail)
+        );
 
-app.post('/set-completed-contract', upload.array(), asyncMiddleware( async (req, res, next) => {
+        res.json(result);
+        return;
+      })
+    ]
+  },
+  {
+    path: "/report-verify",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__ANY_USER],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
 
-  if(!await checkPermissions(req, res, true, "receiver", 0)) return;
+        let opts = COMMON_OPTS;
+        opts['options'] = await generateNavbarOptions(req, false);
+        let result = {res: "Unknown error", err: true};
 
-  let result = {res: 'Error awaiting for database write event', err: true};
+        let nonce_id = await bot.dbStore.fetchval(
+          "SELECT nonce_id FROM nonces WHERE nonce = $1 AND email = $2;",
+          [req.query.nonce, req.query.mail]
+        ).catch((err)=>{
+          result = {res: err, err: true};
+        });
 
-  await bot.dbStore.execute(
-    "UPDATE contracts SET contract_status = 1 WHERE contract_address = $1;",
-    [req.body.cAddr]
-  ).then((res) => {
-    result = {res: 'Everything turned out fine!', err: false};
-  }).catch((err) => {
-    printError("Error updating contract status in the database!", err);
-    result = {res: 'Error updating contract status in the database!', err: true}
-  });
+        if(nonce_id) {
+            await bot.dbStore.execute(
+              "DELETE FROM users WHERE email = $1",
+              [req.query.mail]
+            ).then(() => {
+              result = {res: "Your verification issue report was correctly processed. Sorry for the inconveniences.", err: false};
+            }).catch((err) => {
+              result = {res: err, err: true};
+            });
+        } else {
+          result = {res: "Sorry, we couldn't find any pending verification process related with your email address.", err: true};
+        }
 
-  res.json(result);
-}));
+        if(!result.err) {
+          bot.dbStore.execute(
+            "DELETE FROM nonces WHERE nonce_id = $1;",
+            [nonce_id]
+          );
+        }
 
-app.get('/set-refused-contract', upload.array(), asyncMiddleware( async (req, res) => {
-  if(!await checkPermissions(req, res, true, "receiver", 0)) return;
-  let opts = {};
-  let contract = req.query.cAddr || '';
-  opts['options'] = await generateNavbarOptions(req);
-  opts['title'] = "Logistics 3.0";
-  opts['subtitle'] = "Logistics Smart-Contract Management for unlimited blockchained fun.";
-  opts['currentMarker'] = "<span class=\"sr-only\">(current)</span>";
-  opts['nonparsedAbiDefinition'] = nonparsedAbiDefinition;
-  opts['byteCode'] = byteCode;
-  opts['nonce'] = req.query.nonce;
-  opts['contractAddress'] = contract;
-  opts['MYIP'] = MYIP;
-  await bot.dbStore.fetchrow(
-    "SELECT contract_name FROM contracts WHERE contract_address = $1;",
-    [contract]
-  ).then((res) => {
-    opts['contractName'] = res.contract_name;
-  }).catch((err) => {
-    printError("Error retrieving contract info from the database!", err);
-  });
-  res.render(path.join(__dirname,'public','templates','set-refused-contract.html'), opts);
-}));
+        opts['result'] = result;
 
-app.post('/set-refused-contract', upload.array(), asyncMiddleware( async (req, res, next) => {
-  if(!await checkPermissions(req, res, true, "receiver", 0)) return;
+        res.render(path.join(__dirname, 'public', 'templates', 'report-verify.html'), opts);
+      })
+    ]
+  },
+  {
+    path: "/verify",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__ONLY_NON_AUTHENTICATED],
+    unauthorisedQueryHandler: asyncMiddleware( async (req, res) => {
+      let opts = COMMON_OPTS;
+      opts['options'] = await generateNavbarOptions(req, false);
+      opts['result'] = {res: 'You are already logged in!', err: true};
+      res.render(path.join(__dirname, 'public', 'templates', 'verify.html'), opts);
+    }),
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
 
-  let result = {res: 'Error awaiting for database write event', err: true};
+        let opts = COMMON_OPTS;
+        opts['options'] = await generateNavbarOptions(req, false);
+        let result = {res: "Unknown error", err: true};
 
-  await bot.dbStore.execute(
-    "UPDATE contracts SET contract_status = 2 WHERE contract_address = $1;",
-    [req.body.cAddr]
-  ).then((res) => {
-    result = {res: 'Everything turned out fine!', err: false};
-  }).catch((err) => {
-    printError("Error updating contract status in the database!", err);
-    result = {res: 'Error updating contract status in the database!', err: true}
-  });
+        let nonce_id = await bot.dbStore.fetchval(
+          "SELECT nonce_id FROM nonces WHERE nonce = $1 AND email = $2 AND validity >= $3 :: timestamp;",
+          [req.query.nonce, req.query.mail, generateDatetimeString(0)]
+        ).catch((err)=>{
+          result = {res: err, err: true};
+        });
 
-  res.json(result);
-}));
+        if(nonce_id) {
+          await bot.dbStore.execute(
+            "UPDATE users SET verified = TRUE WHERE email = $1",
+            [req.query.mail]
+          ).then(() => {
+            result = {res: "Your registration was processed correctly. Please check your email account in order to verify your address.", err: false};
+          }).catch((err) => {
+            result = {res: err, err: true};
+          });
+        } else {
+          result = {res: "Couldn't find pending verification.", err: true};
+        }
+
+        if(!result.err) {
+          bot.dbStore.execute(
+            "DELETE FROM nonces WHERE nonce_id = $1;",
+            [nonce_id]
+          );
+        }
+
+        opts['result'] = result;
+
+        res.render(path.join(__dirname, 'public', 'templates', 'verify.html'), opts);
+      })
+    ]
+  },
+  {
+    path: "/logout",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__ONLY_AUTHENTICATED],
+    unauthorisedQueryHandler: (req, res) => {
+      res.redirect('/login');
+      return;
+    },
+    callbacks: [
+      asyncMiddleware( async (req, res) => {
+        delete req.session.authenticated;
+        res.redirect('/');
+      })
+    ]
+  },
+  {
+    path: "/upload",
+    method: "post",
+    permissions: [PERMISSION_PROFILE__RESTRICTED_API],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      upload.single(),
+      asyncMiddleware( async (req, res) => {
+        if(!req.file) return;
+        let nncInB = nonceInBody(req), nncInQ = nonceInQuery(req);
+        let result = {res: 'Everything turned out fine!', err: false};
+        const nonce = nncInB ? req.body.nonce : (nncInQ ? req.query.nonce : '');
+        const address = (await checkNonce(nonce)).address || '';
+        const userID = bot.dbStore.fetchrow("SELECT userID FROM addresses WHERE address = $1", [address]).then((res) => {
+          return res.userID;
+        }).catch((err) => {
+          printError("Error retrieving user info from the database!", err);
+          result = {res: "Error retrieving user info from the database!", err: true};
+        });
+        if(!result.err) {
+          await bot.dbStore.execute("UPDATE users SET avatar = $1 WHERE userID = $2;", [req.file.path, userID]).then((res) => {
+            printLog("User avatar successfuly updated!", "PATH: " + req.file.path);
+          }).catch((err) => {
+            printError("Error updating user avatar on the database!", "PATH: " + req.file.path, err);
+            result = {res: "Error updating user avatar on the database!", err: true};
+          });
+        }
+        res.json(result);
+        return;
+      })
+    ]
+  },
+  {
+    path: "/new-contract",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__ONLY_AUTHENTICATED],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      asyncMiddleware( async (req, res) => {
+        let opts = COMMON_OPTS.concat(CONTRACT_OPTS);
+        opts['options'] = await generateNavbarOptions(req);
+        opts['nonce'] = req.session.nonce;
+        opts['MYIP'] = MYIP;
+        res.render(path.join(__dirname,'public','templates','new-contract.html'), opts);
+      })
+    ]
+  },
+  {
+    path: "/new-contract",
+    method: "post",
+    permissions: [PERMISSION_PROFILE__RESTRICTED_API],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      asyncMiddleware( async (req, res) => {
+        let result = {res: 'Error awaiting for database write event', err: true};
+
+        await bot.dbStore.execute(
+          "INSERT INTO contracts" +
+          "  (contract_address, contract_name, sender_address, handler_address," +
+          "    receiver_address, contract_status, deployment_dt)" +
+          "  VALUES ($1,$2,$3,$4,$5,$6,$7)",
+          [
+            req.body.cAddr,
+            req.body.n,
+            req.body.sAddr,
+            req.body.hAddr,
+            req.body.rAddr,
+            req.body.s,
+            req.body.timestamp
+          ]
+        ).then((res) => {
+          result = {res: 'Everything turned out fine!', err: false};
+        }).catch((err) => {
+          printError("Error registering new contract in the database!", err);
+          result = {res: 'Error registering new contract in the database!', err: true}
+        });
+
+        res.json(result);
+        return;
+      })
+    ]
+  },
+  {
+    path: "/withdrawal",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__RESTRICTED_GUI, "sender", 1],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
+        let opts = COMMON_OPTS.concat(CONTRACT_OPTS);
+        opts['options'] = await generateNavbarOptions(req);
+        opts['nonce'] = req.session.nonce;
+        opts['contractAddress'] = req.query.cAddr || '';
+        opts['MYIP'] = MYIP;
+        await Fiat.fetch().then((toEth) => { opts['fiatUSDChange'] = toEth.USD(1);});
+        res.render(path.join(__dirname,'public','templates','withdrawal.html'), opts);
+      })
+    ]
+  },
+  {
+    path: "/set-completed-contract",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__RESTRICTED_GUI, "receiver", 0],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
+        let opts = COMMON_OPTS.concat(CONTRACT_OPTS);
+        opts['options'] = await generateNavbarOptions(req);
+        opts['nonce'] = req.session.nonce;
+        opts['contractAddress'] = req.query.cAddr || '';
+        opts['MYIP'] = MYIP;
+        await Fiat.fetch().then((toEth) => { opts['fiatUSDChange'] = toEth.USD(1);});
+        res.render(path.join(__dirname,'public','templates','set-completed-contract.html'), opts);
+      })
+    ]
+  },
+  {
+    path: "/set-completed-contract",
+    method: "post",
+    permissions: [PERMISSION_PROFILE__RESTRICTED_API, "receiver", 0],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
+        let result = {res: 'Error awaiting for database write event', err: true};
+
+        await bot.dbStore.execute(
+          "UPDATE contracts SET contract_status = 1 WHERE contract_address = $1;",
+          [req.body.cAddr]
+        ).then((res) => {
+          result = {res: 'Everything turned out fine!', err: false};
+        }).catch((err) => {
+          printError("Error updating contract status in the database!", err);
+          result = {res: 'Error updating contract status in the database!', err: true}
+        });
+
+        res.json(result);
+      })
+    ]
+  },
+  {
+    path: "/set-refused-contract",
+    method: "get",
+    permissions: [PERMISSION_PROFILE__RESTRICTED_GUI, "receiver", 0],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      upload.array(),
+      asyncMiddleware( async (req, res) => {
+        let opts = COMMON_OPTS.concat(CONTRACT_OPTS);
+        let contract = req.query.cAddr || '';
+        opts['options'] = await generateNavbarOptions(req);
+        opts['nonce'] = req.query.nonce;
+        opts['contractAddress'] = contract;
+        opts['MYIP'] = MYIP;
+        await bot.dbStore.fetchrow(
+          "SELECT contract_name FROM contracts WHERE contract_address = $1;",
+          [contract]
+        ).then((res) => {
+          opts['contractName'] = res.contract_name;
+        }).catch((err) => {
+          printError("Error retrieving contract info from the database!", err);
+        });
+        res.render(path.join(__dirname,'public','templates','set-refused-contract.html'), opts);
+      })
+    ]
+  },
+  {
+    path: "/set-refused-contract",
+    method: "post",
+    permissions: [PERMISSION_PROFILE__RESTRICTED_API, "receiver", 0],
+    unauthorisedQueryHandler: DEFAULT_FUNC,
+    callbacks: [
+      upload.array(),
+      asyncMiddleware(async (req, res) => {
+        let result = {res: 'Error awaiting for database write event', err: true};
+
+        await bot.dbStore.execute(
+          "UPDATE contracts SET contract_status = 2 WHERE contract_address = $1;",
+          [req.body.cAddr]
+        ).then((res) => {
+          result = {res: 'Everything turned out fine!', err: false};
+        }).catch((err) => {
+          printError("Error updating contract status in the database!", err);
+          result = {res: 'Error updating contract status in the database!', err: true}
+        });
+
+        res.json(result);
+      })
+    ]
+  }
+];
+
+appEndpoints.forEach((elem) => {app[elem.method](elem.path,...elem.callbacks)});
 
 app.listen(8888, function(){
   printLog("Express Webapp working!!");

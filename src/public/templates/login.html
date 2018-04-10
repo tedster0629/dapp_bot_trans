@@ -1,0 +1,65 @@
+{% extends "index.html" %}
+{% block content %}
+  <h2>Login:</h2>
+  <form method="post">
+    <div class="form-group form-row">
+      <div class="col-md-6 mb-3">
+        <label for="user" id="user-label">User</label>
+        <div class="input-group">
+          <input type="text" name="user" id="user" class="form-control" placeholder="Your email/username" aria-label="User" aria-descriptedby="user-label" required>
+        </div>
+      </div>
+    </div>
+    <div class="form-group form-row">
+      <div class="col-md-6 mb-3">
+        <label for="pass" id="pass-label">Password</label>
+        <div class="input-group">
+          <input type="password" name="pass" id="pass" class="form-control" placeholder="Your password" aria-label="Password" aria-descriptedby="pass-label" required>
+        </div>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary mb-3">Login</button>
+  </form>
+{% endblock %}
+{% block footerScripts %}
+  <script>
+    const processLoginRequest = (user, pass) => {
+      jQuery.post(
+        window.location.href,
+        {
+          user: user,
+          pass_digest: web3.sha3(pass)
+        },
+        function(result) {
+          if(!result.err) {
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-success success mx-2" role="alert" />')
+                .append("<strong>Success!</strong> Your login request was processed correctly. Please check your email account in order to verify your address.")
+            );
+            jQuery('form').addClass('d-none');
+          } else {
+            jQuery('.container-wrapper').append(
+              jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+                .append("<strong>Error:</strong> " + result.res)
+            );
+          }
+      }).fail(function(){
+        jQuery('.container-wrapper').append(
+          jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+            .append("<strong>Error...</strong> Something went wrong while processing your login. Please try again in a few minutes and contact system administrator in case this error persisted.")
+        );
+      });
+    };
+
+    jQuery(window).on('load', ()=>{
+      jQuery('button[type=submit]').on('click',async (evt) => {
+        evt.preventDefault();
+        const uname = jQuery('#user').prop('value');
+        const passw = jQuery('#pass').prop('value');
+        processLoginRequest(uname, passw);
+      });
+    });
+  </script>
+{% endblock %}
+
+
