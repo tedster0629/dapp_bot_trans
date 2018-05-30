@@ -1,0 +1,48 @@
+{% extends "index.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div id="avatar-img" class="mx-2 col-md-3" >
+    <span>
+      Click to Change
+    </span>
+    <img src="{{ session.avatar }}" />
+    <form action="/upload" enctype="multipart/form-data" method="post">
+      <input name="file" type="file" style="display: none;" />
+      <input name="nonce" type="text" style="display: none;" value="{{ nonce }}"/>
+      <input type="submit" value="Upload" style="display: none;" />
+    </form>
+  </div>
+  <div class="mx-2 col-md-9" >
+    <ul class="list-group list-group-flush px-3 mt-4">
+      <li id="contract-value-list-item" class="list-group-item justify-content-between align-items-center row px-0 px-sm-3">
+        <p class="col-sm-4 mb-0">Username</p>
+        <p class="col-sm-8 mb-0 row mx-0 justify-content-end"><span class="col-12 col-sm-auto float-none float-sm-right">{{ session.username }}</span></p>
+      </li>
+      <li class="list-group-item d-flex justify-content-between align-items-center row px-0 px-sm-3">
+        <p class="col-sm-4 mb-0">Email Address</p>
+        <p class="col-sm-8 mb-0 row mx-0 justify-content-end"><span class="col-12 col-sm-auto float-none float-sm-right">{{ session.email }}</span></p>
+      </li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+{% block footerScripts %}
+  <script>
+    jQuery(window).on('load', () => {
+      $('#avatar-img > span').on('click', () => {
+        jQuery("#avatar-img").find("input[type=file]").trigger('click');
+      });
+      $("input[type=file]").on('change',() => {
+        //let nonce = jQuery("input[name=nonce]").prop('value');
+        //let file = jQuery("input[type=file]").prop('value');
+        //jQuery.post('/upload', {nonce: nonce, file: file}, (result) => {
+        //  jQuery('.container-wrapper').append(
+        //    jQuery('<div class="alert alert-' + (result.err ? 'danger' : 'success')  + ' mx-2" role="alert" />')
+        //      .append("<strong>" + (result.err ? 'Error:' : 'Success!')  + "</strong> " + result.res)
+        //  );
+        //});
+        jQuery('#avatar-img > form').trigger('submit');
+      });
+    });
+  </script>
+{% endblock %}

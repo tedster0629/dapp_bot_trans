@@ -1,0 +1,13 @@
+.dropdown-image > img {
+  width: 54px;
+  height: 54px;
+  margin: -24px 0px -19px 0px;
+  border-radius: 27px;
+  border-color: #aaa;
+  border-style: solid;
+  border-width: 2px;
+}
+
+.dropdown-image + .dropdown-menu {
+    margin: 5px 0px 0px -60px;
+}

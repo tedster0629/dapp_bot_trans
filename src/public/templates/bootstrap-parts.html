@@ -17,8 +17,12 @@
             </li>
             {% else %}
             <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                {{ opt.name | safe }}
+              <a class="nav-link dropdown-toggle{{ " dropdown-image" if opt.image and opt.image != "" }}" href="#" id="navbarDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                {% if not opt.image or opt.image == "" %}
+                  {{ opt.name | safe }}
+                {% else %}
+                  <img src="{{ opt.image }}" alt="{{ opt.name }}"/>
+                {% endif %}
               </a>
               <div class="dropdown-menu" aria-labelledby="navbarDropdown">
               {% for o in opt.options %}
@@ -43,8 +47,12 @@
             </li>
             {% else %}
             <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                {{ opt.name | safe }}
+              <a class="nav-link dropdown-toggle{{ " dropdown-image" if opt.image and opt.image != "" }}" href="#" id="navbarDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                {% if not opt.image or opt.image == "" %}
+                  {{ opt.name | safe }}
+                {% else %}
+                  <img src="{{ opt.image }}" alt="{{ opt.name }}"/>
+                {% endif %}
               </a>
               <div class="dropdown-menu" aria-labelledby="navbarDropdown">
               {% for o in opt.options %}

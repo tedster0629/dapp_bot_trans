@@ -31,22 +31,30 @@
           pass_digest: web3.sha3(pass)
         },
         function(result) {
+          //console.log(result);
+          //console.log(JSON.stringify(result));
           if(!result.err) {
             jQuery('.container-wrapper').append(
               jQuery('<div class="alert alert-success success mx-2" role="alert" />')
-                .append("<strong>Success!</strong> Your login request was processed correctly. Please check your email account in order to verify your address.")
+                .append("<strong>Success!</strong> Your login request was processed correctly. You will be redirected in 5 seconds...")
             );
             jQuery('form').addClass('d-none');
+            console.log("http://" + window.location.host + "/?action=login&nonce=" + result.nonce);
+            setTimeout(()=>{window.location.href = "http://" + window.location.host + "/?action=login&nonce=" + result.nonce;}, 5000);
           } else {
             jQuery('.container-wrapper').append(
               jQuery('<div class="alert alert-danger mx-2" role="alert" />')
                 .append("<strong>Error:</strong> " + result.res)
             );
           }
-      }).fail(function(){
+      }).fail(function(jqXHR, textStatus, errorThrown){
         jQuery('.container-wrapper').append(
           jQuery('<div class="alert alert-danger mx-2" role="alert" />')
             .append("<strong>Error...</strong> Something went wrong while processing your login. Please try again in a few minutes and contact system administrator in case this error persisted.")
+        );
+        jQuery('.container-wrapper').append(
+          jQuery('<div class="alert alert-danger mx-2" role="alert" />')
+            .append("<strong>" + textStatus  + ":</strong> " + errorThrown + ".")
         );
       });
     };

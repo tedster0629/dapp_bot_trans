@@ -6,6 +6,7 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 	<!--<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">-->
 	<link rel="stylesheet" type="text/css" href="stylesheets/bootstrap.css">
+        <link rel="stylesheet" type="text/css" href="stylesheets/custom.css">
         <script src="http://{{ MYIP }}:1337/vorlon.js"></script>
 	{% block title %}
 	  <title>Logistics 3.0</title>
@@ -79,6 +80,15 @@
             2: "Refused"
           };
 
+          let netId = "unknown";
+          web3.version.getNetwork((err, nid) => {
+            if(!err) {
+              netId = nid;
+            } else {
+              console.error("Couldn't determine netId");
+            }
+          });
+
           web3.eth.getTransactionReceiptMined = function getTransactionReceiptMined(txHash, interval) {
             const self = this;
             const transactionReceiptAsync = function(resolve, reject) {
@@ -127,12 +137,12 @@
 	</script>
         {% block footerScripts %}
         <script>
-          const abiDefinition = JSON.parse('{{ nonparsedAbiDefinition | safe }}');
+          const abiDefinition = JSON.parse('{{ nonparsedAbiDefinition | safe }}' || 'null') || '';
           const byteCode = '{{ byteCode }}';
           let fiatPriceDollars = web3.toBigNumber(1).div("{{ fiatUSDChange }}");
           jQuery(window).on('load', () => {
             jQuery("#contract-status").append(statusDict["{{ contractStatus }}"]);
-            if(account === "{{ contractSender }}" || account === "{{ contractReceiver }}") {
+            if("{{ contractAddress }}".length > 0 && (account === "{{ contractSender }}" || account === "{{ contractReceiver }}")) {
               jQuery('#contract-value-list-item').removeClass("d-none").addClass("d-flex");
               web3.eth.contract(abiDefinition).at("{{ contractAddress }}").getValue.call({from: account},(err, result) => {
                 if(!err){
