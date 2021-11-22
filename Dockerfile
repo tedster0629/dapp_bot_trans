@@ -1,5 +1,5 @@
 # latest official node image
-FROM node:latest
+FROM node:
 
 RUN git config --global user.email 'docker-dummy@example.com'
 
